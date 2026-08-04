@@ -1,0 +1,33 @@
+---
+# All tasks are skipped when enable_tls is false
+# (e.g., TLS terminated at an ALB or CloudFront instead).
+
+- name: Install certbot
+  ansible.builtin.apt:
+    name: certbot
+    state: present
+  when: enable_tls
+
+- name: Obtain Let's Encrypt certificate (webroot — DNS must already point here)
+  ansible.builtin.command: >
+    certbot certonly --webroot -w {{ wp_root }}
+    -d {{ domain }}{{ ' -d www.' + domain if www_alias else '' }}
+    --expand --non-interactive --agree-tos -m {{ admin_email }}
+  args:
+    creates: /etc/letsencrypt/live/{{ domain }}/fullchain.pem
+  when: enable_tls
+
+- name: Install renewal deploy hook to reload nginx
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      systemctl reload nginx
+  when: enable_tls
+
+- name: Re-render vhost with TLS + HTTPS redirect
+  ansible.builtin.include_role:
+    name: wordpress
+    tasks_from: vhost
+  when: enable_tls

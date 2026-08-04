@@ -1,0 +1,84 @@
+---
+- name: Install WP-CLI
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+    dest: /usr/local/bin/wp
+    mode: "0755"
+
+- name: Create web root
+  ansible.builtin.file:
+    path: "{{ wp_root }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0755"
+
+- name: Download WordPress core
+  ansible.builtin.command: wp core download --path={{ wp_root }} --locale={{ wp_locale }}
+  args:
+    creates: "{{ wp_root }}/wp-settings.php"
+  become_user: www-data
+
+- name: Check whether wp-config.php exists
+  ansible.builtin.stat:
+    path: "{{ wp_root }}/wp-config.php"
+  register: wp_config
+
+- name: Fetch fresh salts from the WordPress API
+  ansible.builtin.uri:
+    url: https://api.wordpress.org/secret-key/1.1/salt/
+    return_content: true
+  register: wp_salts
+  when: not wp_config.stat.exists
+
+- name: Deploy wp-config.php (once — salts are not rotated on re-runs)
+  ansible.builtin.template:
+    src: wp-config.php.j2
+    dest: "{{ wp_root }}/wp-config.php"
+    owner: www-data
+    group: www-data
+    mode: "0640"
+  when: not wp_config.stat.exists
+
+- name: Set directory permissions to 755
+  ansible.builtin.command: find {{ wp_root }} -type d -exec chmod 755 {} +
+  changed_when: false
+
+- name: Set file permissions to 644
+  ansible.builtin.command: find {{ wp_root }} -type f -exec chmod 644 {} +
+  changed_when: false
+
+- name: Restrict wp-config.php to 640
+  ansible.builtin.file:
+    path: "{{ wp_root }}/wp-config.php"
+    mode: "0640"
+    owner: www-data
+    group: www-data
+
+# --- nginx vhost (also re-used by the tls role via tasks_from: vhost) ---
+- name: Render nginx vhost
+  ansible.builtin.import_tasks: vhost.yml
+
+- name: Flush handlers so nginx is live before the install check
+  ansible.builtin.meta: flush_handlers
+
+# --- Optional headless install (skips the web installer) ---
+- name: Check whether WordPress is already installed
+  ansible.builtin.command: wp core is-installed --path={{ wp_root }}
+  register: wp_installed
+  failed_when: false
+  changed_when: false
+  become_user: www-data
+
+- name: Install WordPress site
+  ansible.builtin.command: >
+    wp core install --path={{ wp_root }}
+    --url={{ wp_site_url }}
+    --title="{{ wp_site_title }}"
+    --admin_user={{ wp_admin_user }}
+    --admin_password={{ wp_admin_password }}
+    --admin_email={{ admin_email }}
+    --skip-email
+  when: wp_auto_install and wp_installed.rc != 0
+  become_user: www-data
+  no_log: true

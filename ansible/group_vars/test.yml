@@ -1,0 +1,16 @@
+---
+# Test — test.terminaltwister.com (TLS OFF: no Let's Encrypt issuance,
+# so test deploys never hit LE rate limits or affect production)
+# Network values must match infra/envs/test/main.tf
+
+domain: test.terminaltwister.com
+www_alias: false
+enable_tls: false
+wp_site_title: "Terminal Twister (test)"
+
+backup_s3_bucket_name: terminaltwister-backups-test
+
+vpc_cidr: 10.10.0.0/16
+wp_db_allowed_hosts:
+  - localhost
+  - "10.10.%"

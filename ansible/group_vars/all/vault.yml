@@ -1,0 +1,7 @@
+---
+# SECRETS — replace the placeholders, then encrypt this file:
+#   ansible-vault encrypt group_vars/all/vault.yml
+# Never commit it unencrypted.
+
+vault_wp_db_password: "CHANGE_ME_strong_db_password"
+vault_wp_admin_password: "CHANGE_ME_strong_admin_password"

@@ -1,0 +1,25 @@
+.DS_Store
+
+# --- Terraform ---
+# Provider/module cache — large binaries, never commit
+**/.terraform/
+*.tfplan
+crash.log
+crash.*.log
+
+# Saved plans (tf-plan passes these between CI jobs as artifacts)
+plan.cache
+
+# Environment state lives in the terminaltwister-tfstate S3 bucket and must
+# never be committed. infra/initial-tasks/ is the deliberate exception — it
+# bootstraps that bucket with local state; see its README.
+*.tfstate
+*.tfstate.*
+!infra/initial-tasks/terraform.tfstate
+
+# Variable files may hold secrets; the envs pass everything via module blocks
+*.tfvars
+*.tfvars.json
+
+# --- Ansible ---
+*.retry

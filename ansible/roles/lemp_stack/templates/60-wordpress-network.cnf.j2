@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# WordPress connects over the private IP; exposure is limited by the
+# security group (3306 self only) and ufw (VPC CIDR only).
+[mysqld]
+bind-address = {{ wp_db_bind_address }}

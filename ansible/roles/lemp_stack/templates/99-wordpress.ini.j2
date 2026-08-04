@@ -1,0 +1,7 @@
+; {{ ansible_managed }}
+memory_limit = {{ php_memory_limit }}
+upload_max_filesize = {{ php_upload_max_filesize }}
+post_max_size = {{ php_post_max_size }}
+max_execution_time = 120
+expose_php = Off
+date.timezone = {{ timezone }}

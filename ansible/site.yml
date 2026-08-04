@@ -1,0 +1,18 @@
+---
+# Single entry point. Run everything:
+#   ansible-playbook site.yml --ask-vault-pass
+# Or run one step:
+#   ansible-playbook site.yml --tags caching --ask-vault-pass
+
+- name: Provision a secure, cached WordPress server on EC2
+  hosts: wordpress
+  become: true
+
+  roles:
+    - { role: base_hardening, tags: [base] }        # Step 1: OS + SSH hardening, ufw, fail2ban
+    - { role: lemp_stack,     tags: [lemp] }        # Step 2: nginx, MariaDB, PHP-FPM
+    - { role: wordpress,      tags: [wordpress] }   # Step 3: WordPress + WP-CLI + vhost
+    - { role: tls,            tags: [tls] }         # Step 4: Let's Encrypt TLS
+    - { role: caching,        tags: [caching] }     # Step 5: OPcache, Redis, FastCGI cache, gzip
+    - { role: wp_hardening,   tags: [hardening] }   # Step 6: WP + nginx hardening, rate limits
+    - { role: ops,            tags: [ops] }         # Step 7: backups, logs, monitoring

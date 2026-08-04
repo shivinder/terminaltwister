@@ -1,0 +1,87 @@
+---
+# --- nginx global hardening ---
+
+- name: Hide nginx version
+  ansible.builtin.copy:
+    dest: /etc/nginx/conf.d/hardening.conf
+    mode: "0644"
+    content: |
+      server_tokens off;
+  notify: Reload nginx
+
+- name: Define login rate-limit zone (http context)
+  ansible.builtin.template:
+    src: limit-req-zone.conf.j2
+    dest: /etc/nginx/conf.d/wp-limit-req-zone.conf
+    mode: "0644"
+  notify: Reload nginx
+
+# --- Fill in the snippets the vhost already includes (placeholders until now) ---
+
+- name: Deploy security headers snippet (incl. HSTS when TLS enabled)
+  ansible.builtin.template:
+    src: security-headers.conf.j2
+    dest: /etc/nginx/snippets/security-headers.conf
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Deploy WordPress security snippet (xmlrpc, dotfiles, wp-config, uploads PHP)
+  ansible.builtin.template:
+    src: wp-security.conf.j2
+    dest: /etc/nginx/snippets/wp-security.conf
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Deploy wp-login rate-limit snippet
+  ansible.builtin.template:
+    src: wp-login-limit.conf.j2
+    dest: /etc/nginx/snippets/wp-login-limit.conf
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Validate nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+# --- fail2ban jail for WordPress login abuse ---
+
+- name: Deploy WordPress login fail2ban filter
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/filter.d/wordpress-login.conf
+    mode: "0644"
+    content: |
+      [Definition]
+      failregex = ^<HOST> .* "POST /wp-login\.php
+      ignoreregex =
+  notify: Restart fail2ban
+
+- name: Enable WordPress fail2ban jail
+  ansible.builtin.template:
+    src: jail-wordpress.local.j2
+    dest: /etc/fail2ban/jail.d/wordpress.local
+    mode: "0644"
+  notify: Restart fail2ban
+
+# --- WordPress housekeeping (needs an installed site) ---
+
+- name: Check whether WordPress is installed
+  ansible.builtin.command: wp core is-installed --path={{ wp_root }}
+  register: wp_installed
+  failed_when: false
+  changed_when: false
+  become_user: www-data
+
+- name: Delete unused default plugins and themes
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - wp plugin delete hello --path={{ wp_root }}
+    - wp theme delete twentytwentythree twentytwentyfour --path={{ wp_root }}
+  become_user: www-data
+  register: wp_cleanup
+  failed_when: false
+  changed_when: "'Deleted' in wp_cleanup.stdout | default('')"
+  when: wp_installed.rc == 0
+
+# DISALLOW_FILE_EDIT, WP_AUTO_UPDATE_CORE, and file permissions are set
+# by the wordpress role (wp-config.php template).
+# Reminder (manual): enable a 2FA plugin for admin accounts.

@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+set -euo pipefail
+
+TIMESTAMP=$(date +%F_%H%M)
+BACKUP_DIR="{{ backup_local_dir }}"
+DB_FILE="$BACKUP_DIR/db_${TIMESTAMP}.sql.gz"
+CONTENT_FILE="$BACKUP_DIR/wp-content_${TIMESTAMP}.tar.gz"
+MIN_BYTES={{ backup_min_bytes }}
+LOCK_FILE=/var/run/wp-backup.lock
+
+log() { echo "$(date -Is) $*"; }
+
+{% if enable_cloudwatch %}
+# BackupSuccess metric (1/0) — alarm on <1 or missing data to catch failures.
+# Requires cloudwatch:PutMetricData (included in CloudWatchAgentServerPolicy).
+publish_metric() {
+    local region token
+    token=$(curl -sf -m 2 -X PUT http://169.254.169.254/latest/api/token \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 60") || true
+    region=$(curl -sf -m 2 -H "X-aws-ec2-metadata-token: $token" \
+        http://169.254.169.254/latest/meta-data/placement/region) || true
+    aws cloudwatch put-metric-data \
+        --namespace "WordPress/{{ domain }}" \
+        --metric-name BackupSuccess \
+        --value "$1" \
+        ${region:+--region "$region"} \
+        || log "WARN: failed to publish CloudWatch metric"
+}
+{% else %}
+publish_metric() { :; }
+{% endif %}
+
+# Any failure (set -e or explicit exit) is logged and reported.
+cleanup() {
+    local status=$?
+    if [ "$status" -ne 0 ]; then
+        log "ERROR: backup FAILED (exit $status)"
+        publish_metric 0
+    fi
+}
+trap cleanup EXIT
+
+# Prevent overlapping runs
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+    log "ERROR: another backup is already running"
+    exit 1
+fi
+
+mkdir -p "$BACKUP_DIR"
+
+# Database (root via unix_socket)
+mysqldump --single-transaction --quick --routines --triggers \
+    "{{ wp_db_name }}" | gzip > "$DB_FILE"
+
+# wp-content (themes, plugins, uploads) — tolerate exit 1 ("file changed
+# as we read it" on a live site); anything worse is a real error.
+rc=0
+tar czf "$CONTENT_FILE" --warning=no-file-changed -C "{{ wp_root }}" wp-content || rc=$?
+if [ "$rc" -gt 1 ]; then
+    log "ERROR: tar failed with exit $rc"
+    exit "$rc"
+fi
+
+# Verify archives are intact and plausibly sized
+for f in "$DB_FILE" "$CONTENT_FILE"; do
+    gzip -t "$f"
+    size=$(stat -c%s "$f")
+    if [ "$size" -lt "$MIN_BYTES" ]; then
+        log "ERROR: $f is suspiciously small (${size} bytes < ${MIN_BYTES})"
+        exit 1
+    fi
+done
+
+{% if backup_s3_bucket | length > 0 %}
+# Upload to S3 (instance profile must allow s3:PutObject)
+aws s3 cp --only-show-errors "$DB_FILE" "{{ backup_s3_bucket }}/{{ domain }}/"
+aws s3 cp --only-show-errors "$CONTENT_FILE" "{{ backup_s3_bucket }}/{{ domain }}/"
+{% endif %}
+
+# Prune local copies
+find "$BACKUP_DIR" -type f -mtime +{{ backup_retention_days }} -delete
+
+publish_metric 1
+log "backup complete: $TIMESTAMP"

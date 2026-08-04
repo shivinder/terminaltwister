@@ -1,0 +1,58 @@
+---
+# Renders the nginx vhost. Re-run by the tls role (tasks_from: vhost)
+# after the certificate exists, which switches the site to HTTPS.
+
+- name: Check for existing TLS certificate
+  ansible.builtin.stat:
+    path: /etc/letsencrypt/live/{{ domain }}/fullchain.pem
+  register: tls_cert
+
+- name: Ensure hardening snippets exist (empty placeholders until wp_hardening runs)
+  ansible.builtin.copy:
+    content: "# populated by the wp_hardening role\n"
+    dest: /etc/nginx/snippets/{{ item }}
+    force: false
+    mode: "0644"
+  loop:
+    - security-headers.conf
+    - wp-security.conf
+    - wp-login-limit.conf
+
+- name: Deploy PHP-FPM handler snippet
+  ansible.builtin.template:
+    src: fastcgi-php-wp.conf.j2
+    dest: /etc/nginx/snippets/fastcgi-php-wp.conf
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Deploy FastCGI cache zone
+  ansible.builtin.template:
+    src: fastcgi-cache-zone.conf.j2
+    dest: /etc/nginx/conf.d/fastcgi-cache-zone.conf
+    mode: "0644"
+  when: enable_fastcgi_cache
+  notify: Reload nginx
+
+- name: Deploy WordPress vhost
+  ansible.builtin.template:
+    src: wordpress.conf.j2
+    dest: /etc/nginx/sites-available/{{ domain }}.conf
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable vhost
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/{{ domain }}.conf
+    dest: /etc/nginx/sites-enabled/{{ domain }}.conf
+    state: link
+  notify: Reload nginx
+
+- name: Remove default nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Validate nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false

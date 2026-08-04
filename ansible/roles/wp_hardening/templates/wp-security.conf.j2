@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+autoindex off;
+
+# Block XML-RPC (brute-force / DDoS amplification vector).
+# If you need Jetpack/mobile app, allow specific IPs instead of deny all.
+location = /xmlrpc.php { deny all; }
+
+# Block dotfiles (.git, .env, .htaccess) — but allow ACME challenges
+location ~ /\.(?!well-known) { deny all; }
+
+# Never serve wp-config or its backups
+location ~* wp-config\.php { deny all; }
+
+# No PHP execution from uploads
+location ~* ^/wp-content/uploads/.*\.php$ { deny all; }
+
+# Hide version-revealing files
+location ~* ^/(readme|license)\.(html|txt)$ { deny all; }

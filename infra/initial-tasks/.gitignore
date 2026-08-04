@@ -1,0 +1,7 @@
+# Local providers/modules cache — never commit
+.terraform/
+*.tfplan
+
+# NOTE: terraform.tfstate is intentionally NOT ignored here.
+# This bootstrap uses local state (one bucket, no secrets) and committing
+# it keeps the bootstrap reproducible. See README.md.

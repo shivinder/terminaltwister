@@ -1,0 +1,2 @@
+# {{ ansible_managed }}
+limit_req_zone $binary_remote_addr zone=wplogin:10m rate={{ login_rate_limit }};

@@ -1,0 +1,97 @@
+---
+# ============================================================
+# Common parameters — edit here, everything else follows.
+# Secrets live in group_vars/all/vault.yml (encrypt with ansible-vault).
+# ============================================================
+
+# --- Site ---
+# Per-environment values (domain, www_alias, enable_tls, wp_site_title,
+# backup_s3_bucket_name, vpc_cidr, wp_db_allowed_hosts) live in
+# group_vars/production.yml and group_vars/test.yml.
+admin_email: admin@terminaltwister.com
+timezone: UTC
+
+# --- Admin system user (created by base_hardening) ---
+system_user: deploy
+system_user_ssh_key: "ssh-ed25519 AAAA...REPLACE_WITH_YOUR_PUBLIC_KEY"
+system_user_nopasswd_sudo: true
+
+# --- SSH ---
+ssh_port: 22
+
+# --- PHP ---
+# Must match what the Ubuntu release ships: 26.04 LTS carries PHP 8.5
+# (24.04 carried 8.3). Drives every php* package name and the FPM socket path.
+php_version: "8.5"
+php_memory_limit: 256M
+php_upload_max_filesize: 64M
+php_post_max_size: 64M
+php_extensions:
+  - "php{{ php_version }}-fpm"
+  - "php{{ php_version }}-mysql"
+  - "php{{ php_version }}-gd"
+  - "php{{ php_version }}-curl"
+  - "php{{ php_version }}-xml"
+  - "php{{ php_version }}-mbstring"
+  - "php{{ php_version }}-imagick"
+  - "php{{ php_version }}-zip"
+  - "php{{ php_version }}-intl"
+  - "php{{ php_version }}-redis"
+
+# --- Database ---
+wp_db_name: wordpress
+wp_db_user: wpuser
+wp_db_password: "{{ vault_wp_db_password }}"
+# WordPress connects to MariaDB over the instance's PRIVATE IP (not localhost),
+# so the DB can later move to a dedicated EC2 in the private subnet with a
+# one-variable change. MariaDB binds to this address; access is restricted by
+# the security group (3306 self only) and ufw (VPC CIDR only).
+wp_db_host: "{{ ansible_default_ipv4.address }}"
+wp_db_bind_address: "{{ ansible_default_ipv4.address }}"
+
+# --- WordPress ---
+wp_root: /var/www/{{ domain }}
+wp_table_prefix: wp_
+wp_locale: en_US
+wp_disallow_file_edit: true
+# Automatic headless install (skips the web installer):
+wp_auto_install: true
+wp_admin_user: blogadmin
+wp_admin_password: "{{ vault_wp_admin_password }}"
+wp_site_url: "{{ ('https' if enable_tls else 'http') }}://{{ domain }}"
+
+# --- TLS ---
+enable_tls: true
+hsts_max_age: 31536000
+
+# --- Caching ---
+enable_fastcgi_cache: true
+fastcgi_cache_path: /var/cache/nginx/fastcgi
+fastcgi_cache_size: 512m
+fastcgi_cache_valid: 60m
+enable_redis_cache: true
+redis_maxmemory: 128mb
+opcache_memory: 192
+static_expires: 30d
+
+# --- Login rate limiting (wp_hardening) ---
+login_rate_limit: 30r/m
+login_burst: 5
+
+# --- Backups (ops) ---
+backup_local_dir: /var/backups/wordpress
+backup_retention_days: 7
+backup_cron_hour: "3"
+# Fail the backup if an archive is smaller than this (corruption guard)
+backup_min_bytes: 1024
+# backup_s3_bucket_name is per-environment (group_vars/<env>.yml); "" skips S3.
+# The instance role (Terraform) grants s3:PutObject on the bucket.
+backup_s3_bucket: "{{ ('s3://' + backup_s3_bucket_name) if backup_s3_bucket_name else '' }}"
+
+# --- Monitoring (ops) ---
+enable_cloudwatch: false
+# Days to retain CloudWatch log groups (cost control)
+cloudwatch_log_retention_days: 30
+# Pin to a specific agent build (e.g. "1.300048.0b...") so test and production
+# run the same version; "latest" installs whatever AWS currently publishes.
+cloudwatch_agent_version: latest

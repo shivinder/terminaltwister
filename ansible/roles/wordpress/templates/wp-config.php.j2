@@ -1,0 +1,34 @@
+<?php
+// {{ ansible_managed }}
+
+define( 'DB_NAME', '{{ wp_db_name }}' );
+define( 'DB_USER', '{{ wp_db_user }}' );
+define( 'DB_PASSWORD', '{{ wp_db_password }}' );
+define( 'DB_HOST', '{{ wp_db_host }}' );
+define( 'DB_CHARSET', 'utf8mb4' );
+define( 'DB_COLLATE', '' );
+
+{{ wp_salts.content }}
+
+$table_prefix = '{{ wp_table_prefix }}';
+
+// --- Security ---
+define( 'DISALLOW_FILE_EDIT', {{ 'true' if wp_disallow_file_edit else 'false' }} );
+define( 'WP_AUTO_UPDATE_CORE', 'minor' );
+define( 'FS_METHOD', 'direct' );
+define( 'WP_DEBUG', false );
+{% if enable_tls %}
+define( 'FORCE_SSL_ADMIN', true );
+{% endif %}
+
+{% if enable_redis_cache %}
+// --- Redis object cache ---
+define( 'WP_REDIS_HOST', '127.0.0.1' );
+define( 'WP_REDIS_PORT', 6379 );
+define( 'WP_CACHE', true );
+{% endif %}
+
+if ( ! defined( 'ABSPATH' ) ) {
+	define( 'ABSPATH', __DIR__ . '/' );
+}
+require_once ABSPATH . 'wp-settings.php';

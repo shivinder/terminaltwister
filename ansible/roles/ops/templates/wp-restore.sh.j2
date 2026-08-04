@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# Restore WordPress database + wp-content from a backup.
+#
+# Usage:
+#   wp-restore.sh              # list available backups
+#   wp-restore.sh TIMESTAMP    # restore (e.g. wp-restore.sh 2026-07-09_0300)
+#
+# Backups are looked up locally first{% if backup_s3_bucket | length > 0 %}, then downloaded from S3{% endif %}.
+set -euo pipefail
+
+BACKUP_DIR="{{ backup_local_dir }}"
+{% if backup_s3_bucket | length > 0 %}
+S3_PREFIX="{{ backup_s3_bucket }}/{{ domain }}"
+{% endif %}
+
+log() { echo "$(date -Is) $*"; }
+
+if [ $# -lt 1 ]; then
+    echo "Available local backups:"
+    ls -1 "$BACKUP_DIR" 2>/dev/null | sed -n 's/^db_\(.*\)\.sql\.gz$/  \1/p' || true
+{% if backup_s3_bucket | length > 0 %}
+    echo "Available S3 backups:"
+    aws s3 ls "$S3_PREFIX/" | sed -n 's/.*db_\(.*\)\.sql\.gz$/  \1/p' || true
+{% endif %}
+    echo "Usage: $0 TIMESTAMP"
+    exit 1
+fi
+
+TS="$1"
+DB_FILE="$BACKUP_DIR/db_${TS}.sql.gz"
+CONTENT_FILE="$BACKUP_DIR/wp-content_${TS}.tar.gz"
+
+# Fetch from S3 if not present locally
+for f in "$DB_FILE" "$CONTENT_FILE"; do
+    if [ ! -f "$f" ]; then
+{% if backup_s3_bucket | length > 0 %}
+        log "fetching $(basename "$f") from S3"
+        aws s3 cp --only-show-errors "$S3_PREFIX/$(basename "$f")" "$f"
+{% else %}
+        log "ERROR: $f not found and no S3 bucket configured"
+        exit 1
+{% endif %}
+    fi
+done
+
+# Verify archives before touching the live site
+gzip -t "$DB_FILE"
+gzip -t "$CONTENT_FILE"
+
+echo "About to restore backup '$TS' over the LIVE site {{ domain }}:"
+echo "  - database '{{ wp_db_name }}' will be overwritten"
+echo "  - {{ wp_root }}/wp-content will be replaced (current kept as wp-content.pre-restore)"
+read -r -p "Type 'yes' to continue: " CONFIRM
+if [ "$CONFIRM" != "yes" ]; then
+    echo "Aborted."
+    exit 1
+fi
+
+log "restoring database"
+gunzip -c "$DB_FILE" | mysql "{{ wp_db_name }}"
+
+log "restoring wp-content"
+SUFFIX=$(date +%s)
+mv "{{ wp_root }}/wp-content" "{{ wp_root }}/wp-content.pre-restore.$SUFFIX"
+tar xzf "$CONTENT_FILE" -C "{{ wp_root }}"
+chown -R www-data:www-data "{{ wp_root }}/wp-content"
+
+log "restore complete: $TS"
+log "previous wp-content kept at {{ wp_root }}/wp-content.pre-restore.$SUFFIX — remove it once verified"

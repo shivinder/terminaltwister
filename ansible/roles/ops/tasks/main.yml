@@ -1,0 +1,86 @@
+---
+# --- Backups: daily DB dump + wp-content, optional S3 upload ---
+
+- name: Install AWS CLI (S3 upload / CloudWatch metrics)
+  ansible.builtin.apt:
+    name: awscli
+    state: present
+  when: (backup_s3_bucket | length > 0) or enable_cloudwatch
+
+- name: Create local backup directory
+  ansible.builtin.file:
+    path: "{{ backup_local_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy backup script
+  ansible.builtin.template:
+    src: wp-backup.sh.j2
+    dest: /usr/local/bin/wp-backup.sh
+    mode: "0750"
+
+- name: Deploy restore script
+  ansible.builtin.template:
+    src: wp-restore.sh.j2
+    dest: /usr/local/bin/wp-restore.sh
+    mode: "0750"
+
+- name: Schedule daily backup
+  ansible.builtin.cron:
+    name: wordpress-backup
+    hour: "{{ backup_cron_hour }}"
+    minute: "0"
+    job: /usr/local/bin/wp-backup.sh >> /var/log/wp-backup.log 2>&1
+
+- name: Rotate backup log
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/wp-backup
+    mode: "0644"
+    content: |
+      /var/log/wp-backup.log {
+          weekly
+          rotate 4
+          compress
+          missingok
+          notifempty
+      }
+
+# --- CloudWatch agent (optional) ---
+
+- name: Check installed CloudWatch agent version
+  ansible.builtin.command: dpkg-query -W -f='${Version}' amazon-cloudwatch-agent
+  register: cw_installed
+  changed_when: false
+  failed_when: false
+  when: enable_cloudwatch
+
+# Installed when absent; when a version is pinned, also reinstalled on mismatch.
+- name: Download CloudWatch agent (arch-aware)
+  ansible.builtin.get_url:
+    url: "https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}/{{ cloudwatch_agent_version }}/amazon-cloudwatch-agent.deb"
+    dest: /tmp/amazon-cloudwatch-agent.deb
+    mode: "0644"
+  when: >-
+    enable_cloudwatch and
+    (cw_installed.rc != 0 or
+     (cloudwatch_agent_version != 'latest' and
+      cloudwatch_agent_version not in cw_installed.stdout))
+
+- name: Install CloudWatch agent
+  ansible.builtin.apt:
+    deb: /tmp/amazon-cloudwatch-agent.deb
+  when: >-
+    enable_cloudwatch and
+    (cw_installed.rc != 0 or
+     (cloudwatch_agent_version != 'latest' and
+      cloudwatch_agent_version not in cw_installed.stdout))
+
+- name: Deploy CloudWatch agent config
+  ansible.builtin.template:
+    src: cloudwatch-agent.json.j2
+    dest: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+    mode: "0644"
+  when: enable_cloudwatch
+  notify: Restart cloudwatch agent

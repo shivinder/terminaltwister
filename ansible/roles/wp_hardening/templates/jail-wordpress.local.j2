@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+[wordpress-login]
+enabled  = true
+port     = http,https
+filter   = wordpress-login
+backend  = auto
+logpath  = /var/log/nginx/{{ domain }}.access.log
+maxretry = 10
+findtime = 10m
+bantime  = 1h

@@ -1,0 +1,88 @@
+---
+- name: Install nginx, MariaDB and PHP-FPM with extensions
+  ansible.builtin.apt:
+    name: "{{ ['nginx', 'mariadb-server'] + php_extensions }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable and start services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - nginx
+    - mariadb
+    - "php{{ php_version }}-fpm"
+
+# --- mysql_secure_installation equivalent ---
+# On Ubuntu, MariaDB root authenticates via unix_socket (no password,
+# only root shell can connect) — this is the secure default.
+
+- name: Remove anonymous MySQL users
+  community.mysql.mysql_user:
+    name: ""
+    host_all: true
+    state: absent
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+
+- name: Remove MySQL test database
+  community.mysql.mysql_db:
+    name: test
+    state: absent
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+
+# --- Bind MariaDB to the private IP ---
+# WordPress targets wp_db_host (the EC2 private IP) instead of localhost,
+# so moving the DB to a dedicated instance later is a variable change.
+# Exposure is limited by the SG (3306 self only) and ufw (VPC CIDR only).
+
+- name: Bind MariaDB to the private IP
+  ansible.builtin.template:
+    src: 60-wordpress-network.cnf.j2
+    dest: /etc/mysql/mariadb.conf.d/60-wordpress-network.cnf
+    mode: "0644"
+  notify: Restart mariadb
+
+- name: Allow MariaDB from within the VPC only (ufw)
+  community.general.ufw:
+    rule: allow
+    port: "3306"
+    proto: tcp
+    src: "{{ vpc_cidr }}"
+
+# --- WordPress database + least-privilege user ---
+
+- name: Create WordPress database
+  community.mysql.mysql_db:
+    name: "{{ wp_db_name }}"
+    encoding: utf8mb4
+    collation: utf8mb4_unicode_ci
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+
+- name: Create WordPress DB user (restricted hosts)
+  community.mysql.mysql_user:
+    name: "{{ wp_db_user }}"
+    password: "{{ wp_db_password }}"
+    host: "{{ item }}"
+    priv: "{{ wp_db_name }}.*:ALL"
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  loop: "{{ wp_db_allowed_hosts }}"
+  no_log: true
+
+# --- PHP tuning ---
+
+- name: Deploy PHP overrides for WordPress
+  ansible.builtin.template:
+    src: 99-wordpress.ini.j2
+    dest: /etc/php/{{ php_version }}/fpm/conf.d/99-wordpress.ini
+    mode: "0644"
+  notify: Restart php-fpm
+
+# MariaDB must be listening on the private IP before the wordpress role
+# runs wp core install — flush now instead of at end of play.
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers

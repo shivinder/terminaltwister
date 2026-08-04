@@ -1,0 +1,20 @@
+---
+# Role defaults — overridden by group_vars (group_vars/all/main.yml is the
+# canonical place to edit; these keep the role self-contained).
+
+# --- Backups ---
+backup_local_dir: /var/backups/wordpress
+backup_retention_days: 7
+backup_cron_hour: "3"
+# Full s3:// URL, or "" to skip S3 upload
+backup_s3_bucket: ""
+# Sanity check: fail the backup if an archive is smaller than this
+backup_min_bytes: 1024
+
+# --- CloudWatch ---
+enable_cloudwatch: false
+# Days to retain CloudWatch log groups (cost control)
+cloudwatch_log_retention_days: 30
+# Pin to a specific build (e.g. "1.300048.0b...") for reproducible deploys
+# across test/production; "latest" installs whatever AWS currently publishes.
+cloudwatch_agent_version: latest

@@ -1,0 +1,15 @@
+---
+# Production — terminaltwister.com (TLS ON)
+# Network values must match infra/envs/production/main.tf
+
+domain: terminaltwister.com
+www_alias: true
+enable_tls: true
+wp_site_title: "Terminal Twister"
+
+backup_s3_bucket_name: terminaltwister-backups
+
+vpc_cidr: 10.0.0.0/16
+wp_db_allowed_hosts:
+  - localhost
+  - "10.0.%"

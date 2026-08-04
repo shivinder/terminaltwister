@@ -1,0 +1,3 @@
+# {{ ansible_managed }}
+limit_req zone=wplogin burst={{ login_burst }} nodelay;
+limit_req_status 429;

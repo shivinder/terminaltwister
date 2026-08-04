@@ -1,0 +1,106 @@
+# {{ ansible_managed }}
+{% set tls_on = enable_tls and tls_cert.stat.exists %}
+{% if www_alias %}
+# Canonical redirect: www -> apex
+server {
+    listen 80;
+    listen [::]:80;
+{% if tls_on %}
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    ssl_certificate     /etc/letsencrypt/live/{{ domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ domain }}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+{% endif %}
+    server_name www.{{ domain }};
+
+    location /.well-known/acme-challenge/ {
+        root {{ wp_root }};
+    }
+
+    location / {
+        return 301 {{ 'https' if tls_on else 'http' }}://{{ domain }}$request_uri;
+    }
+}
+
+{% endif %}
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{ domain }};
+{% if tls_on %}
+
+    location /.well-known/acme-challenge/ {
+        root {{ wp_root }};
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name {{ domain }};
+
+    ssl_certificate     /etc/letsencrypt/live/{{ domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ domain }}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+{% endif %}
+
+    root {{ wp_root }};
+    index index.php;
+
+    access_log /var/log/nginx/{{ domain }}.access.log;
+    error_log  /var/log/nginx/{{ domain }}.error.log;
+
+    client_max_body_size {{ php_upload_max_filesize }};
+
+    include snippets/security-headers.conf;
+    include snippets/wp-security.conf;
+{% if enable_fastcgi_cache %}
+
+    # --- FastCGI page cache: bypass for logged-in users, POSTs, admin, feeds ---
+    set $skip_cache 0;
+    if ($request_method = POST) { set $skip_cache 1; }
+    if ($query_string != "") { set $skip_cache 1; }
+    if ($request_uri ~* "/wp-admin/|/xmlrpc\.php|wp-.*\.php|/feed/|sitemap(_index)?\.xml") { set $skip_cache 1; }
+    if ($http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_no_cache|wordpress_logged_in") { set $skip_cache 1; }
+{% endif %}
+
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    location = /wp-login.php {
+        include snippets/wp-login-limit.conf;
+        include snippets/fastcgi-php-wp.conf;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php-wp.conf;
+{% if enable_fastcgi_cache %}
+        fastcgi_cache WORDPRESS;
+        fastcgi_cache_valid 200 301 302 {{ fastcgi_cache_valid }};
+        fastcgi_cache_bypass $skip_cache;
+        fastcgi_no_cache $skip_cache;
+        # add_header in a location drops inherited headers — re-include them
+        include snippets/security-headers.conf;
+        add_header X-FastCGI-Cache $upstream_cache_status;
+{% endif %}
+    }
+
+    location ~* \.(css|js|jpg|jpeg|png|gif|ico|svg|webp|woff|woff2|ttf)$ {
+        expires {{ static_expires }};
+        add_header Cache-Control "public";
+        access_log off;
+    }
+
+    location = /favicon.ico { log_not_found off; access_log off; }
+    location = /robots.txt  { allow all; log_not_found off; access_log off; }
+}

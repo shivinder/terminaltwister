@@ -1,0 +1,79 @@
+---
+# --- OPcache (biggest single PHP win) ---
+
+- name: Tune OPcache
+  ansible.builtin.template:
+    src: 10-opcache-tuning.ini.j2
+    dest: /etc/php/{{ php_version }}/fpm/conf.d/10-opcache-tuning.ini
+    mode: "0644"
+  notify: Restart php-fpm
+
+# --- Redis object cache ---
+
+- name: Install Redis server
+  ansible.builtin.apt:
+    name: redis-server
+    state: present
+  when: enable_redis_cache
+
+- name: Cap Redis memory and set eviction policy
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: "^#?\\s*maxmemory\\s+", line: "maxmemory {{ redis_maxmemory }}" }
+    - { regexp: "^#?\\s*maxmemory-policy\\s+", line: "maxmemory-policy allkeys-lru" }
+  when: enable_redis_cache
+  notify: Restart redis
+
+- name: Enable and start Redis
+  ansible.builtin.service:
+    name: redis-server
+    state: started
+    enabled: true
+  when: enable_redis_cache
+
+- name: Check whether WordPress is installed
+  ansible.builtin.command: wp core is-installed --path={{ wp_root }}
+  register: wp_installed
+  failed_when: false
+  changed_when: false
+  become_user: www-data
+  when: enable_redis_cache
+
+- name: Install and activate Redis Object Cache plugin
+  ansible.builtin.command: wp plugin install redis-cache --activate --path={{ wp_root }}
+  args:
+    creates: "{{ wp_root }}/wp-content/plugins/redis-cache"
+  become_user: www-data
+  when: enable_redis_cache and wp_installed.rc == 0
+
+- name: Enable the object-cache drop-in
+  ansible.builtin.command: wp redis enable --path={{ wp_root }}
+  args:
+    creates: "{{ wp_root }}/wp-content/object-cache.php"
+  become_user: www-data
+  when: enable_redis_cache and wp_installed.rc == 0
+
+# --- FastCGI page cache directory ---
+# (Cache zone + vhost directives are rendered by the wordpress role,
+#  toggled by enable_fastcgi_cache.)
+
+- name: Create FastCGI cache directory
+  ansible.builtin.file:
+    path: "{{ fastcgi_cache_path }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0700"
+  when: enable_fastcgi_cache
+
+# --- gzip compression ---
+
+- name: Enable gzip compression
+  ansible.builtin.template:
+    src: gzip.conf.j2
+    dest: /etc/nginx/conf.d/gzip.conf
+    mode: "0644"
+  notify: Reload nginx

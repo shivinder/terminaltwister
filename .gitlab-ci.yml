@@ -1,0 +1,167 @@
+# Pipeline: infra (Terraform) + config (Ansible), per environment.
+#
+#   build     - ansible runner image (only when Dockerfile/requirements change)
+#   validate  - terraform validate (test+production) and ansible syntax check
+#   plan      - terraform plan per environment (report visible in MR/pipeline)
+#   apply     - terraform apply per environment (MANUAL)
+#   deploy    - ansible playbook per environment (MANUAL)
+#
+# Terraform state lives in the manually-created S3 bucket
+# terminaltwister-tfstate (ap-southeast-2), one key per environment:
+# test/terraform.tfstate and production/terraform.tfstate.
+# Backend config is hardcoded in infra/envs/*/main.tf.
+#
+# Required CI/CD variables (Settings > CI/CD > Variables, masked + protected):
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION (ap-southeast-2)
+#   SSH_PRIVATE_KEY        - matches the EC2 key pair (type: File)
+#   ANSIBLE_VAULT_PASSWORD - for group_vars/all/vault.yml
+#   TF_VAR_key_name        - (optional) EC2 key pair name override
+#
+# Security group IDs are NOT stored as variables — the deploy jobs resolve
+# them at run time from the SG's Name tag (wp-<env>-sg, set by Terraform).
+
+stages: [build, validate, plan, apply, deploy]
+
+variables:
+  ANSIBLE_IMAGE: $CI_REGISTRY_IMAGE/ansible-runner:latest
+
+# =====================  ansible runner image  =====================
+
+build-image:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"username\":\"gitlab-ci-token\",\"password\":\"${CI_JOB_TOKEN}\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR/ansible"
+      --dockerfile "$CI_PROJECT_DIR/ansible/Dockerfile"
+      --destination "$ANSIBLE_IMAGE"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - ansible/Dockerfile
+        - ansible/requirements.yml
+
+# =====================  terraform  =====================
+
+.tf:
+  image:
+    name: hashicorp/terraform:1.15  # must satisfy required_version in infra/**/*.tf
+    entrypoint: [""]
+  variables:
+    TF_ROOT: infra/envs/${ENVIRONMENT}
+    TF_IN_AUTOMATION: "true"
+  parallel:
+    matrix:
+      - ENVIRONMENT: [test, production]
+  before_script:
+    - cd ${TF_ROOT}
+    - terraform init  # S3 backend configured in main.tf; AWS creds from CI variables
+
+tf-validate:
+  extends: .tf
+  stage: validate
+  # Runs on merge requests, where protected AWS credentials are NOT exposed.
+  # Validation needs no state, so skip the backend entirely.
+  before_script:
+    - cd ${TF_ROOT}
+    - terraform init -backend=false
+  script:
+    - terraform fmt -check -recursive ../../
+    - terraform validate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+tf-plan:
+  extends: .tf
+  stage: plan
+  script:
+    - terraform plan -out=plan.cache
+  artifacts:
+    paths:
+      - ${TF_ROOT}/plan.cache
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+tf-apply:
+  extends: .tf
+  stage: apply
+  # Shared with the deploy job for this environment: an apply running mid-deploy
+  # would revoke the runner's temporary SSH rule and break the play.
+  resource_group: env-${ENVIRONMENT}
+  script:
+    - terraform apply -auto-approve plan.cache
+    - terraform output
+  dependencies:
+    - tf-plan
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+
+# =====================  ansible  =====================
+
+ansible-lint:
+  stage: validate
+  image: $ANSIBLE_IMAGE
+  script:
+    - cd ansible
+    - ansible-playbook site.yml --syntax-check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+.deploy-ansible:
+  stage: deploy
+  image: $ANSIBLE_IMAGE
+  # Shared with tf-apply for this environment — see the note there.
+  resource_group: env-${DEPLOY_ENV}
+  variables:
+    ANSIBLE_HOST_KEY_CHECKING: "False"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  before_script:
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - cp "$SSH_PRIVATE_KEY" ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+    - echo "$ANSIBLE_VAULT_PASSWORD" > /tmp/vault_pass && chmod 600 /tmp/vault_pass
+    # Resolve the env's SG by its Name tag — no stored variable, never stale
+    - SG_ID=$(aws ec2 describe-security-groups
+      --filters "Name=tag:Name,Values=wp-${DEPLOY_ENV}-sg"
+      --query 'SecurityGroups[0].GroupId' --output text)
+    - test "$SG_ID" != "None"  # fail fast if the env's infra isn't applied yet
+    # Temporarily allow this runner's IP to reach SSH on the env's SG
+    - RUNNER_IP=$(curl -s https://checkip.amazonaws.com)
+    - aws ec2 authorize-security-group-ingress
+      --group-id "$SG_ID"
+      --protocol tcp --port 22 --cidr "${RUNNER_IP}/32" || true
+  script:
+    - cd ansible
+    - ansible-playbook site.yml
+      --limit $DEPLOY_ENV
+      --vault-password-file /tmp/vault_pass
+      -e ansible_ssh_private_key_file=~/.ssh/deploy_key
+  after_script:
+    # New shell — re-resolve, then always revoke the temporary SSH rule,
+    # even if the play failed
+    - SG_ID=$(aws ec2 describe-security-groups
+      --filters "Name=tag:Name,Values=wp-${DEPLOY_ENV}-sg"
+      --query 'SecurityGroups[0].GroupId' --output text)
+    - RUNNER_IP=$(curl -s https://checkip.amazonaws.com)
+    - aws ec2 revoke-security-group-ingress
+      --group-id "$SG_ID"
+      --protocol tcp --port 22 --cidr "${RUNNER_IP}/32" || true
+
+deploy-test:
+  extends: .deploy-ansible
+  variables:
+    DEPLOY_ENV: test
+
+deploy-production:
+  extends: .deploy-ansible
+  variables:
+    DEPLOY_ENV: production
