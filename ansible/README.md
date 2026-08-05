@@ -61,7 +61,7 @@ make check                       # dry run
 make deploy TAGS=caching         # single step
 ```
 
-**GitLab CI (recommended for ongoing deploys):** `.gitlab-ci.yml` at the repo root builds the runner image, syntax-checks every push/MR, and offers a **manual** deploy job on the default branch. The deploy job temporarily allowlists the runner's IP on the EC2 security group for SSH, runs the playbook, and always revokes the rule afterwards. Required CI/CD variables (masked + protected) are documented at the top of `.gitlab-ci.yml`: `SSH_PRIVATE_KEY`, `ANSIBLE_VAULT_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`. The security group is resolved at run time from its `wp-<env>-sg` Name tag — no SG variable needed.
+**GitLab CI (recommended for ongoing deploys):** `.gitlab-ci.yml` at the repo root builds the runner image, syntax-checks every push/MR, and offers a **manual** deploy job on the default branch. The deploy job temporarily allowlists the runner's IP on the EC2 security group for SSH, runs the playbook, and always revokes the rule afterwards. Required CI/CD variables are documented at the top of `.gitlab-ci.yml`. All are **protected**; `ANSIBLE_VAULT_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_DEFAULT_REGION` are also **masked**. `SSH_PRIVATE_KEY` is a **File** variable and cannot be masked — GitLab rejects multi-line values there, so save it with visibility **Visible**. The security group is resolved at run time from its `wp-<env>-sg` Name tag — no SG variable needed.
 
 ## Notes
 

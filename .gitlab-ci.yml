@@ -11,11 +11,21 @@
 # test/terraform.tfstate and production/terraform.tfstate.
 # Backend config is hardcoded in infra/envs/*/main.tf.
 #
-# Required CI/CD variables (Settings > CI/CD > Variables, masked + protected):
+# Required CI/CD variables (Settings > CI/CD > Variables). All are protected —
+# the jobs below only run on the default branch, which must be protected too.
+#
+# Masked + protected (single-line values):
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION (ap-southeast-2)
-#   SSH_PRIVATE_KEY        - matches the EC2 key pair (type: File)
 #   ANSIBLE_VAULT_PASSWORD - for group_vars/all/vault.yml
 #   TF_VAR_key_name        - (optional) EC2 key pair name override
+#
+# Protected, visibility "Visible" (NOT masked):
+#   SSH_PRIVATE_KEY        - matches the EC2 key pair (type: File)
+#     GitLab cannot mask a multi-line value, so the key can only be saved as
+#     Visible. Masking would add nothing anyway: a File variable expands to a
+#     path, not the key text, so the secret never reaches a log or command line.
+#     Keep the trailing newline when pasting, or ssh fails with
+#     "Load key: error in libcrypto".
 #
 # Security group IDs are NOT stored as variables — the deploy jobs resolve
 # them at run time from the SG's Name tag (wp-<env>-sg, set by Terraform).
