@@ -19,6 +19,14 @@ module "wordpress" {
   backup_bucket_name = "terminaltwister-backups-test"
   enable_cloudwatch  = false
 
+  # Empty by default, so no SNS topic and no alarm are created here.
+  alarm_email = var.alarm_email
+
+  # No snapshots: test is meant to be destroyed and rebuilt, and everything on
+  # it comes back from the playbook. Set this to 1 temporarily when rehearsing
+  # the volume-swap restore — better to practise here than on production.
+  snapshot_retention_days = 0
+
   # Optionally restrict test web access to your own IP:
   # allowed_web_cidrs = ["203.0.113.10/32"]
 }

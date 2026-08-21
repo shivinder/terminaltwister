@@ -21,4 +21,16 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+
+  # Safety net, not the primary mechanism: the wordpress module tags its own
+  # resources via local.common_tags. This catches anything added later that
+  # forgets to, so nothing lands in the account unattributed. Environment is
+  # not repeated here — it lives in the module, where it can't drift from the
+  # environment argument.
+  default_tags {
+    tags = {
+      Project   = "terminaltwister"
+      ManagedBy = "terraform"
+    }
+  }
 }
