@@ -89,6 +89,10 @@ backup_min_bytes: 1024
 backup_s3_bucket: "{{ ('s3://' + backup_s3_bucket_name) if backup_s3_bucket_name else '' }}"
 
 # --- Monitoring (ops) ---
+# Installs the CloudWatch agent (host metrics + log shipping). Note this does
+# NOT gate the BackupSuccess metric any more — wp-backup.sh publishes that
+# unconditionally, because gating it is what made backup failures silent.
+# The alarm watching it lives in infra/modules/wordpress/monitoring.tf.
 enable_cloudwatch: false
 # Days to retain CloudWatch log groups (cost control)
 cloudwatch_log_retention_days: 30

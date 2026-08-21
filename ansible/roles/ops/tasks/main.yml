@@ -1,11 +1,13 @@
 ---
 # --- Backups: daily DB dump + wp-content, optional S3 upload ---
 
+# Unconditional: wp-backup.sh now always publishes the BackupSuccess metric, so
+# the CLI is always needed. It used to be installed only when S3 upload or the
+# CloudWatch agent was enabled.
 - name: Install AWS CLI (S3 upload / CloudWatch metrics)
   ansible.builtin.apt:
     name: awscli
     state: present
-  when: (backup_s3_bucket | length > 0) or enable_cloudwatch
 
 - name: Create local backup directory
   ansible.builtin.file:

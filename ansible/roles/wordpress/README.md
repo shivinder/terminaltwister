@@ -23,5 +23,6 @@ Installs WordPress, WP-CLI, and the nginx vhost.
 
 - `tasks/vhost.yml` is re-used by the `tls` role (`include_role: tasks_from=vhost`) to re-render the vhost after the cert is issued.
 - The vhost includes placeholder snippets that the `wp_hardening` role later fills in — nginx stays valid at every step.
+- **The salts exist in exactly one place**, and this role will not write them a second time (`when: not wp_config.stat.exists`). Lose them and every session is invalidated, plus any plugin data encrypted with `AUTH_KEY` is gone for good — a database restore cannot bring it back. That is why the `ops` role backs `wp-config.php` up nightly. Do **not** restore that file wholesale onto a rebuilt instance, though: `wp_db_host` is the old instance's private IP. Copy only the salt block — `roles/ops/README.md`, "Rebuilding from scratch".
 
 Run alone: `ansible-playbook site.yml --tags wordpress`

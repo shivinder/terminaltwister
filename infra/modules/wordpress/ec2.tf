@@ -16,6 +16,18 @@ resource "aws_instance" "wordpress" {
     volume_size = var.root_volume_size
     volume_type = "gp3"
     encrypted   = true
+
+    # Already the AWS default; stated so the choice is version-controlled and
+    # any drift shows up in a plan, the same reasoning s3.tf uses for its
+    # explicit SSE block. Safe because snapshots.tf keeps snapshots that outlive
+    # the instance — and the alternative, false, leaves an orphaned volume
+    # billing quietly after every termination.
+    delete_on_termination = true
+
+    # Without this the volume shows up untagged and unnamed in the EC2 Volumes
+    # list, misses cost allocation by Project, and — since snapshots.tf targets
+    # volumes by exactly these tags — would never be snapshotted.
+    tags = merge(local.common_tags, { Name = "${local.name}-root" })
   }
 
   metadata_options {

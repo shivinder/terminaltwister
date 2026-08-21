@@ -13,6 +13,18 @@ Let's Encrypt certificate + HTTPS enforcement.
 
 - **DNS A record for `domain` must already point to this instance** (Elastic IP recommended), and port 80 must be reachable — otherwise issuance fails.
 
+## Backup and recovery
+
+`/etc/letsencrypt` — the account key, the certs and their private keys — is
+included in the `ops` role's nightly `config_*.tar.gz`. Certbot would happily
+re-issue on a rebuilt instance, but Let's Encrypt rate-limits duplicate
+certificates (5 per week for an identical hostname set), which is easy to burn
+through while iterating on a rebuild. Restoring the directory sidesteps that:
+`cp -a letsencrypt /etc/` then reload nginx. Details in `roles/ops/README.md`.
+
+Nothing here is `enable_tls: false`-safe by accident: with TLS off the directory
+does not exist, and the backup script skips it rather than failing.
+
 ## Key variables
 
 | Variable | Purpose |

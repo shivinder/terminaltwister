@@ -78,6 +78,42 @@ resource "aws_s3_bucket_public_access_block" "tfstate" {
   restrict_public_buckets = true
 }
 
+# Refuse plaintext HTTP. S3 allows it unless a policy says otherwise, and state
+# files hold every attribute of every resource — instance IDs, ARNs, and any
+# sensitive value a provider happens to record. Terraform's S3 backend uses HTTPS,
+# so nothing legitimate is affected. Mirrors the same policy on the backup bucket
+# in modules/wordpress/s3.tf.
+data "aws_iam_policy_document" "tfstate_tls_only" {
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = ["s3:*"]
+
+    resources = [
+      aws_s3_bucket.tfstate.arn,
+      "${aws_s3_bucket.tfstate.arn}/*",
+    ]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "tfstate" {
+  bucket     = aws_s3_bucket.tfstate.id
+  policy     = data.aws_iam_policy_document.tfstate_tls_only.json
+  depends_on = [aws_s3_bucket_public_access_block.tfstate]
+}
+
 # Keep old state versions 90 days, then expire — bounds storage cost
 resource "aws_s3_bucket_lifecycle_configuration" "tfstate" {
   bucket = aws_s3_bucket.tfstate.id

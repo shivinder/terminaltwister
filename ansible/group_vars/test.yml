@@ -8,6 +8,10 @@ www_alias: false
 enable_tls: false
 wp_site_title: "Terminal Twister (test)"
 
+# Must match `environment` in infra/envs/test/main.tf — it is the CloudWatch
+# dimension the backup-failure alarm keys on. Change one, change both.
+environment_name: test
+
 backup_s3_bucket_name: terminaltwister-backups-test
 
 vpc_cidr: 10.10.0.0/16

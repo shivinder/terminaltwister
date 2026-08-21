@@ -6,14 +6,22 @@ TIMESTAMP=$(date +%F_%H%M)
 BACKUP_DIR="{{ backup_local_dir }}"
 DB_FILE="$BACKUP_DIR/db_${TIMESTAMP}.sql.gz"
 CONTENT_FILE="$BACKUP_DIR/wp-content_${TIMESTAMP}.tar.gz"
+CONFIG_FILE="$BACKUP_DIR/config_${TIMESTAMP}.tar.gz"
 MIN_BYTES={{ backup_min_bytes }}
 LOCK_FILE=/var/run/wp-backup.lock
 
 log() { echo "$(date -Is) $*"; }
 
-{% if enable_cloudwatch %}
-# BackupSuccess metric (1/0) — alarm on <1 or missing data to catch failures.
-# Requires cloudwatch:PutMetricData (included in CloudWatchAgentServerPolicy).
+# BackupSuccess metric: 1 from the end of a good run, 0 from the failure trap.
+# The alarm in infra/modules/wordpress/monitoring.tf treats missing data as a
+# breach, so this doubles as a heartbeat — silence is itself the signal, which
+# is what catches a dead instance that never got to report anything.
+#
+# Always defined. This used to be gated on enable_cloudwatch and rendered as a
+# no-op, which is precisely why failed backups went unnoticed. The instance role
+# grants cloudwatch:PutMetricData unconditionally (infra/modules/wordpress/iam.tf);
+# if that ever goes missing the put fails loudly into the log rather than
+# pretending to have worked.
 publish_metric() {
     local region token
     token=$(curl -sf -m 2 -X PUT http://169.254.169.254/latest/api/token \
@@ -21,15 +29,13 @@ publish_metric() {
     region=$(curl -sf -m 2 -H "X-aws-ec2-metadata-token: $token" \
         http://169.254.169.254/latest/meta-data/placement/region) || true
     aws cloudwatch put-metric-data \
-        --namespace "WordPress/{{ domain }}" \
+        --namespace "TerminalTwister/Backups" \
         --metric-name BackupSuccess \
+        --dimensions "Environment={{ environment_name }}" \
         --value "$1" \
         ${region:+--region "$region"} \
         || log "WARN: failed to publish CloudWatch metric"
 }
-{% else %}
-publish_metric() { :; }
-{% endif %}
 
 # Any failure (set -e or explicit exit) is logged and reported.
 cleanup() {
@@ -63,6 +69,31 @@ if [ "$rc" -gt 1 ]; then
     exit "$rc"
 fi
 
+# Config that Ansible cannot regenerate identically, kept in its own archive
+# because it is a break-glass artifact rather than something wp-restore.sh should
+# ever lay over a live site (see the DB_HOST warning in that script):
+#
+#   wp-config.php    - the salts. A plugin that stores AUTH_KEY-encrypted data in
+#                      the options table cannot be decrypted after a rebuild
+#                      without them, no matter how good the database backup is.
+#                      Also the only reason logged-in cookies survive a rebuild.
+#   /etc/letsencrypt - account key, certs and their private keys. Re-issuable,
+#                      but Let's Encrypt rate limits how often.
+#
+# Everything else on this box — nginx, PHP, MariaDB, ufw, fail2ban — comes back
+# from the playbook, so it is deliberately not here. Runs as root (root's
+# crontab), which /etc/letsencrypt/archive being 0700 requires.
+#
+# Interleaved -C keeps every stored path relative, so an extraction cannot write
+# outside wherever it is pointed, and the live/*.pem symlinks stay symlinks that
+# still resolve into archive/. The conditional argument goes first so the last
+# line never ends in a stray line-continuation when TLS is off.
+tar czf "$CONFIG_FILE" \
+{% if enable_tls %}
+    -C /etc letsencrypt \
+{% endif %}
+    -C "{{ wp_root }}" wp-config.php
+
 # Verify archives are intact and plausibly sized
 for f in "$DB_FILE" "$CONTENT_FILE"; do
     gzip -t "$f"
@@ -73,10 +104,23 @@ for f in "$DB_FILE" "$CONTENT_FILE"; do
     fi
 done
 
+# The config archive is checked for integrity but NOT against MIN_BYTES: with TLS
+# off it holds a single ~1 KB file in a tar padded out with zeros, which gzips to
+# a few hundred bytes and would trip a floor meant to catch an empty mysqldump.
+# gzip -t is the real corruption check; non-empty is all the size test can mean here.
+gzip -t "$CONFIG_FILE"
+if [ ! -s "$CONFIG_FILE" ]; then
+    log "ERROR: $CONFIG_FILE is empty"
+    exit 1
+fi
+
 {% if backup_s3_bucket | length > 0 %}
-# Upload to S3 (instance profile must allow s3:PutObject)
+# Upload to S3 (instance profile must allow s3:PutObject).
+# Note the config archive carries the DB password and TLS private keys — the
+# bucket is private, encrypted and versioned, which is what makes that OK.
 aws s3 cp --only-show-errors "$DB_FILE" "{{ backup_s3_bucket }}/{{ domain }}/"
 aws s3 cp --only-show-errors "$CONTENT_FILE" "{{ backup_s3_bucket }}/{{ domain }}/"
+aws s3 cp --only-show-errors "$CONFIG_FILE" "{{ backup_s3_bucket }}/{{ domain }}/"
 {% endif %}
 
 # Prune local copies

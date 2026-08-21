@@ -16,11 +16,21 @@ resource "aws_iam_role" "wordpress" {
 }
 
 # Least privilege: write backups, read them back for restores (wp-restore.sh),
-# list the bucket — nothing else
+# clean up after a failed upload, list the bucket — nothing else
 data "aws_iam_policy_document" "backup" {
   statement {
-    sid       = "ReadWriteBackups"
-    actions   = ["s3:PutObject", "s3:GetObject"]
+    sid = "ReadWriteBackups"
+
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+      # `aws s3 cp` switches to multipart above 8 MB, which wp-content
+      # tarballs exceed. Without Abort the CLI cannot tidy up when an
+      # upload dies mid-flight: the uploaded parts stay billable and are
+      # invisible to `aws s3 ls`. s3.tf sweeps up whatever escapes this.
+      "s3:AbortMultipartUpload",
+    ]
+
     resources = ["${aws_s3_bucket.backups.arn}/*"]
   }
 
@@ -28,6 +38,25 @@ data "aws_iam_policy_document" "backup" {
     sid       = "ListBackupBucket"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.backups.arn]
+  }
+
+  # Lets wp-backup.sh report whether it worked. Granted unconditionally rather
+  # than behind enable_cloudwatch: gating it is what made backup failures silent
+  # in the first place, and one custom metric is inside the CloudWatch free tier.
+  # monitoring.tf alarms on the result.
+  statement {
+    sid     = "PublishBackupMetric"
+    actions = ["cloudwatch:PutMetricData"]
+
+    # PutMetricData has no resource-level permissions; the namespace condition
+    # is the only way to scope it, and is what keeps this from being cloudwatch:*
+    resources = ["*"]
+
+    condition {
+      test     = "StringLike"
+      variable = "cloudwatch:namespace"
+      values   = ["TerminalTwister/*"]
+    }
   }
 }
 
@@ -46,4 +75,5 @@ resource "aws_iam_role_policy_attachment" "cloudwatch" {
 resource "aws_iam_instance_profile" "wordpress" {
   name = "${local.name}-profile"
   role = aws_iam_role.wordpress.name
+  tags = local.common_tags
 }

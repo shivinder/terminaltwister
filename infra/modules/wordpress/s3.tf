@@ -33,6 +33,52 @@ resource "aws_s3_bucket_versioning" "backups" {
   }
 }
 
+# SSE above covers these objects at rest; this covers them in transit. S3 accepts
+# plain HTTP unless a policy says otherwise, and this bucket holds the database
+# password, the WordPress salts and the Let's Encrypt private keys — see "What the
+# backup bucket holds" in infra/README.md.
+#
+# Nothing legitimate is affected: the AWS CLI on the instance and Terraform's own
+# S3 backend both speak HTTPS already, so this only ever denies something that
+# should not have been happening.
+data "aws_iam_policy_document" "backups_tls_only" {
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = ["s3:*"]
+
+    # Both ARNs on purpose. The bucket ARN alone would leave ListBucket reachable
+    # over HTTP; the /* form alone would leave the object operations covered but
+    # not the bucket ones.
+    resources = [
+      aws_s3_bucket.backups.arn,
+      "${aws_s3_bucket.backups.arn}/*",
+    ]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  policy = data.aws_iam_policy_document.backups_tls_only.json
+
+  # block_public_policy rejects a policy that GRANTS public access. This one only
+  # denies, so it is accepted either way — the dependency is here to keep the two
+  # bucket-level writes ordered rather than racing on a freshly created bucket.
+  depends_on = [aws_s3_bucket_public_access_block.backups]
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "backups" {
   bucket = aws_s3_bucket.backups.id
 
@@ -48,6 +94,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
 
     noncurrent_version_expiration {
       noncurrent_days = 30
+    }
+
+    # Backstop for the multipart uploads iam.tf grants Abort on: if the
+    # instance is terminated or the process killed mid-upload, the CLI never
+    # gets to abort and the parts linger, billed but unlisted. S3 discards
+    # them a week after the upload started.
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
     }
   }
 }

@@ -29,7 +29,10 @@ ansible/
 - EC2 instance running Ubuntu 26.04, reachable via SSH (user `ubuntu`, key auth)
 - EC2 security group: inbound 80, 443 open; 22 restricted to your IP
 - DNS A record for `domain` pointing at the instance's Elastic IP (required before the `tls` role)
-- For S3 backups: instance profile with `s3:PutObject` on the backup bucket
+- Instance profile with `s3:PutObject` on the backup bucket (S3 backups) and
+  `cloudwatch:PutMetricData` on `TerminalTwister/*` — the latter is granted
+  unconditionally, because the backup reports success through it whether or not
+  the CloudWatch agent is enabled. Both come from `infra/modules/wordpress/iam.tf`
 
 ## Usage
 
@@ -61,11 +64,11 @@ make check                       # dry run
 make deploy TAGS=caching         # single step
 ```
 
-**GitLab CI (recommended for ongoing deploys):** `.gitlab-ci.yml` at the repo root builds the runner image, syntax-checks every push/MR, and offers a **manual** deploy job on the default branch. The deploy job temporarily allowlists the runner's IP on the EC2 security group for SSH, runs the playbook, and always revokes the rule afterwards. Required CI/CD variables are documented at the top of `.gitlab-ci.yml`. All are **protected**; `ANSIBLE_VAULT_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_DEFAULT_REGION` are also **masked**. `SSH_PRIVATE_KEY` is a **File** variable and cannot be masked — GitLab rejects multi-line values there, so save it with visibility **Visible**. The security group is resolved at run time from its `wp-<env>-sg` Name tag — no SG variable needed.
+**GitLab CI (recommended for ongoing deploys):** `.gitlab-ci.yml` at the repo root builds the runner image, syntax-checks every push/MR, and offers a **manual** deploy job on the default branch. The deploy job temporarily allowlists the runner's IP on the EC2 security group for SSH, runs the playbook, and always revokes the rule afterwards. Required CI/CD variables are documented at the top of `.gitlab-ci.yml`. All are **protected**; `ANSIBLE_VAULT_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_DEFAULT_REGION` are also **masked**. `SSH_PRIVATE_KEY` is a **File** variable and cannot be masked — GitLab rejects multi-line values there, so save it with visibility **Visible**. The security group is resolved at run time from its `tt-wp-<env>-sg` Name tag — no SG variable needed.
 
 ## Notes
 
-- **Idempotent**: safe to re-run. Salts and certificates are generated once, not rotated.
+- **Idempotent**: safe to re-run. Salts and certificates are generated once, not rotated — which makes them the one thing a rebuilt instance cannot reproduce, so the `ops` role copies `wp-config.php` and `/etc/letsencrypt` into the nightly backup. Restoring them has a trap worth reading before you need it: `roles/ops/README.md`, "Rebuilding from scratch".
 - **Order matters on first run**: run the full `site.yml`. The nginx vhost is rendered HTTP-only until the `tls` role obtains a certificate, then re-rendered with TLS + HSTS redirect.
 - The FastCGI page-cache directives live in the vhost template (`roles/wordpress/templates/wordpress.conf.j2`) and are toggled by `enable_fastcgi_cache`; the `caching` role owns OPcache, Redis, and gzip.
 - ufw runs in addition to the EC2 security group (defense in depth).

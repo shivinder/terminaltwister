@@ -9,7 +9,7 @@
 # Terraform state lives in the manually-created S3 bucket
 # terminaltwister-tfstate (ap-southeast-2), one key per environment:
 # test/terraform.tfstate and production/terraform.tfstate.
-# Backend config is hardcoded in infra/envs/*/main.tf.
+# Backend config is hardcoded in infra/envs/*/providers.tf.
 #
 # Required CI/CD variables (Settings > CI/CD > Variables). All are protected —
 # the jobs below only run on the default branch, which must be protected too.
@@ -18,6 +18,9 @@
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION (ap-southeast-2)
 #   ANSIBLE_VAULT_PASSWORD - for group_vars/all/vault.yml
 #   TF_VAR_key_name        - (optional) EC2 key pair name override
+#   TF_VAR_alarm_email     - where backup-failure alerts go. Unset means NO
+#     alerting: production applies fine and stays silent when backups break.
+#     `terraform output backup_alerts` in the tf-apply log says which you got.
 #
 # Protected, visibility "Visible" (NOT masked):
 #   SSH_PRIVATE_KEY        - matches the EC2 key pair (type: File)
@@ -28,7 +31,7 @@
 #     "Load key: error in libcrypto".
 #
 # Security group IDs are NOT stored as variables — the deploy jobs resolve
-# them at run time from the SG's Name tag (wp-<env>-sg, set by Terraform).
+# them at run time from the SG's Name tag (tt-wp-<env>-sg, set by Terraform).
 
 stages: [build, validate, plan, apply, deploy]
 
@@ -69,7 +72,7 @@ build-image:
       - ENVIRONMENT: [test, production]
   before_script:
     - cd ${TF_ROOT}
-    - terraform init  # S3 backend configured in main.tf; AWS creds from CI variables
+    - terraform init  # S3 backend configured in providers.tf; AWS creds from CI variables
 
 tf-validate:
   extends: .tf
@@ -141,7 +144,7 @@ ansible-lint:
     - echo "$ANSIBLE_VAULT_PASSWORD" > /tmp/vault_pass && chmod 600 /tmp/vault_pass
     # Resolve the env's SG by its Name tag — no stored variable, never stale
     - SG_ID=$(aws ec2 describe-security-groups
-      --filters "Name=tag:Name,Values=wp-${DEPLOY_ENV}-sg"
+      --filters "Name=tag:Name,Values=tt-wp-${DEPLOY_ENV}-sg"
       --query 'SecurityGroups[0].GroupId' --output text)
     - test "$SG_ID" != "None"  # fail fast if the env's infra isn't applied yet
     # Temporarily allow this runner's IP to reach SSH on the env's SG
@@ -159,7 +162,7 @@ ansible-lint:
     # New shell — re-resolve, then always revoke the temporary SSH rule,
     # even if the play failed
     - SG_ID=$(aws ec2 describe-security-groups
-      --filters "Name=tag:Name,Values=wp-${DEPLOY_ENV}-sg"
+      --filters "Name=tag:Name,Values=tt-wp-${DEPLOY_ENV}-sg"
       --query 'SecurityGroups[0].GroupId' --output text)
     - RUNNER_IP=$(curl -s https://checkip.amazonaws.com)
     - aws ec2 revoke-security-group-ingress

@@ -23,6 +23,9 @@ if [ $# -lt 1 ]; then
     echo "Available S3 backups:"
     aws s3 ls "$S3_PREFIX/" | sed -n 's/.*db_\(.*\)\.sql\.gz$/  \1/p' || true
 {% endif %}
+    echo
+    echo "Each timestamp also has a config_TIMESTAMP.tar.gz (salts + TLS certs)."
+    echo "This script never restores it — run '$0 TIMESTAMP' and read the closing note."
     echo "Usage: $0 TIMESTAMP"
     exit 1
 fi
@@ -30,6 +33,9 @@ fi
 TS="$1"
 DB_FILE="$BACKUP_DIR/db_${TS}.sql.gz"
 CONTENT_FILE="$BACKUP_DIR/wp-content_${TS}.tar.gz"
+# Backed up alongside the two above, deliberately never restored by this script
+# — see the closing message for why.
+CONFIG_FILE="$BACKUP_DIR/config_${TS}.tar.gz"
 
 # Fetch from S3 if not present locally
 for f in "$DB_FILE" "$CONTENT_FILE"; do
@@ -68,3 +74,26 @@ chown -R www-data:www-data "{{ wp_root }}/wp-content"
 
 log "restore complete: $TS"
 log "previous wp-content kept at {{ wp_root }}/wp-content.pre-restore.$SUFFIX — remove it once verified"
+
+# Deliberately not automated. wp-config.php records DB_HOST as this instance's
+# PRIVATE IP, which changes whenever the instance is rebuilt — dropping an old
+# copy over a working one points WordPress at a dead address, and the symptom
+# looks like a broken database rather than a bad restore. So: keep the config
+# Ansible just wrote, and lift only the salts out of the backup.
+cat <<EOF
+
+Not restored: $(basename "$CONFIG_FILE")
+  Only needed after rebuilding the box from scratch. Do NOT copy wp-config.php
+  over the current one — its DB_HOST is the old instance's private IP.
+
+  mkdir -p /tmp/cfg && tar xzf $CONFIG_FILE -C /tmp/cfg
+  # then hand-copy ONLY the define('AUTH_KEY'...) ... define('NONCE_SALT'...)
+  # block into {{ wp_root }}/wp-config.php, keeping every other line as-is.
+  # Restoring those salts is what keeps logged-in sessions and any
+  # AUTH_KEY-encrypted plugin data working across the rebuild.
+{% if enable_tls %}
+  # TLS certs, if this rebuild should keep them instead of re-issuing:
+  #   cp -a /tmp/cfg/letsencrypt /etc/ && systemctl reload nginx
+{% endif %}
+  rm -rf /tmp/cfg   # it holds the DB password and TLS private keys
+EOF

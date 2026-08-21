@@ -16,4 +16,12 @@ module "wordpress" {
   key_name           = var.key_name
   backup_bucket_name = "terminaltwister-backups"
   enable_cloudwatch  = false
+
+  # Creates the SNS topic + backup-failure alarm. The subscription needs a
+  # confirmation click before any alert can be delivered — see infra/README.md.
+  alarm_email = var.alarm_email
+
+  # A week of nightly root-volume snapshots, so a lost or corrupted disk is a
+  # volume swap rather than a rebuild. Roughly A$0.50/month — see infra/README.md.
+  snapshot_retention_days = 7
 }
