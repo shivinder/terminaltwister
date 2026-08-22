@@ -9,14 +9,14 @@ Installs WordPress, WP-CLI, and the nginx vhost.
 - Generates `wp-config.php` with fresh salts from the WordPress API (**once** — never rotated on re-runs), hardened constants (`DISALLOW_FILE_EDIT`, `WP_AUTO_UPDATE_CORE minor`), and Redis defines when `enable_redis_cache`
 - Permissions: dirs 755, files 644, `wp-config.php` 640, owner `www-data`
 - Renders the nginx vhost (`tasks/vhost.yml`) — HTTP-only until a certificate exists, then HTTP→HTTPS redirect + TLS. Includes FastCGI page-cache directives when `enable_fastcgi_cache`
-- Optional headless install (`wp_auto_install: true`): runs `wp core install` so the public web installer is never exposed
+- Does **not** install WordPress. `wp core install` lives in the [`wp_install`](../wp_install) role, which runs after `tls`, because the install records the site's own URL and that URL must not say `https` before a certificate exists
 
 ## Key variables
 
 | Variable | Purpose |
 |---|---|
 | `wp_root`, `domain`, `wp_locale`, `wp_table_prefix` | Install location and identity |
-| `wp_auto_install`, `wp_site_title`, `wp_admin_user`, `wp_admin_password` | Headless install |
+| `enable_tls` | Whether the vhost renders with TLS (only once a cert is on disk) |
 | `enable_fastcgi_cache`, `fastcgi_cache_*` | Page cache in the vhost |
 
 ## Notes

@@ -13,6 +13,25 @@
     - { role: lemp_stack,     tags: [lemp] }        # Step 2: nginx, MariaDB, PHP-FPM
     - { role: wordpress,      tags: [wordpress] }   # Step 3: WordPress + WP-CLI + vhost
     - { role: tls,            tags: [tls] }         # Step 4: Let's Encrypt TLS
-    - { role: caching,        tags: [caching] }     # Step 5: OPcache, Redis, FastCGI cache, gzip
-    - { role: wp_hardening,   tags: [hardening] }   # Step 6: WP + nginx hardening, rate limits
-    - { role: ops,            tags: [ops] }         # Step 7: backups, logs, monitoring
+    - { role: wp_install,     tags: [install] }     # Step 5: wp core install, now the cert is real
+    - { role: caching,        tags: [caching] }     # Step 6: OPcache, Redis, FastCGI cache, gzip
+    - { role: wp_hardening,   tags: [hardening] }   # Step 7: WP + nginx hardening, rate limits
+    - { role: ops,            tags: [ops] }         # Step 8: backups, logs, monitoring
+
+  post_tasks:
+    # delegate_to: localhost so this traverses the path a visitor takes — DNS,
+    # the security group, nginx — rather than the host curling itself, which
+    # would pass even with 80/443 closed to the world. validate_certs means a
+    # missing or broken chain fails here too.
+    - name: Smoke test — the site actually serves
+      ansible.builtin.uri:
+        url: "{{ wp_site_url }}"
+        status_code: 200
+        validate_certs: "{{ enable_tls }}"
+      register: smoke
+      until: smoke.status == 200
+      retries: 3
+      delay: 5
+      delegate_to: localhost
+      become: false
+      tags: [smoke]

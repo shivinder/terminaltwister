@@ -104,4 +104,24 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
       days_after_initiation = 7
     }
   }
+
+  # A second rule, not another clause in the one above: S3 rejects
+  # expired_object_delete_marker in the same rule as expiration.days.
+  #
+  # On a versioned bucket, expiring the current version does not delete anything
+  # — it writes a delete marker and pushes the version noncurrent.
+  # noncurrent_version_expiration then clears the version it displaced, leaving a
+  # zero-byte marker with nothing behind it and no rule that removes it. Three
+  # archives a night is roughly 1,100 of those a year, each one slowing every
+  # ListObjectVersions call, including the ones wp-restore.sh makes.
+  rule {
+    id     = "expire-delete-markers"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
 }

@@ -69,8 +69,20 @@ KEY_NAME=$(grep -A5 'variable "key_name"' "$ENV_DIR/variables.tf" 2>/dev/null \
 BACKUP_BUCKET=$(extract "$ENV_DIR/main.tf" 's/.*backup_bucket_name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p')
 STATE_BUCKET=$(extract "$ENV_DIR/providers.tf" 's/.*bucket[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p')
 
-# TF_VAR_key_name overrides the config default, same as it would for Terraform.
+# main.tf passes alarm_email straight through from the env's own variable, so the
+# effective value is that variable's default unless TF_VAR_alarm_email overrides.
+# The || true matters: grep exits 1 on no match and pipefail would kill the run.
+ALARM_EMAIL=$(grep -A6 'variable "alarm_email"' "$ENV_DIR/variables.tf" 2>/dev/null \
+  | sed -nE 's/.*default[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' | head -1 || true)
+
+# Anchored, unlike the value extractions above: this one is a literal in main.tf
+# and an unanchored match would also find it inside the comments that explain it.
+SNAPSHOT_DAYS=$(extract "$ENV_DIR/main.tf" 's/^[[:space:]]*snapshot_retention_days[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p')
+
+# TF_VAR_* overrides the config default, same as they would for Terraform.
 KEY_NAME="${TF_VAR_key_name:-$KEY_NAME}"
+ALARM_EMAIL="${TF_VAR_alarm_email:-$ALARM_EMAIL}"
+SNAPSHOT_DAYS="${TF_VAR_snapshot_retention_days:-${SNAPSHOT_DAYS:-0}}"
 
 : "${REQ_TF:=1.15}"
 : "${REGION:=ap-southeast-2}"
@@ -174,11 +186,33 @@ else
   note "fix with: terraform fmt -recursive $INFRA_DIR"
 fi
 
-if grep -q 'admin_ssh_cidrs' "$ENV_DIR/main.tf" 2>/dev/null; then
+# Anchored: envs/test/main.tf carries a commented-out allowed_web_cidrs in the
+# same style, and an unanchored match would report a commented-out
+# admin_ssh_cidrs as set while the security group opens no SSH at all.
+if grep -Eq '^[[:space:]]*admin_ssh_cidrs' "$ENV_DIR/main.tf" 2>/dev/null; then
   ok "admin_ssh_cidrs is set — SSH will be reachable from those CIDRs"
 else
   warn "admin_ssh_cidrs not set: the security group will open NO SSH port"
   note "fine for CI deploys (the job allowlists its own IP); set it to run Ansible locally"
+fi
+
+# Both of these create nothing at their defaults, and "nothing" is indis-
+# tinguishable from "working" until the night it matters — the same reason the
+# module surfaces them as outputs. Say it before the apply, not after.
+
+if [[ -n "$ALARM_EMAIL" ]]; then
+  ok "backup-failure alerts go to $ALARM_EMAIL"
+  note "AWS emails a confirmation link; until it is clicked, nothing is delivered"
+else
+  warn "alarm_email is empty: a failed — or missing — backup will alert nobody"
+  note "set TF_VAR_alarm_email, or accept it for an environment you can rebuild"
+fi
+
+if [[ "$SNAPSHOT_DAYS" -gt 0 ]]; then
+  ok "root-volume snapshots retained $SNAPSHOT_DAYS day(s)"
+else
+  warn "snapshot_retention_days is 0: no EBS snapshots of the root volume"
+  note "expected for test; on production a lost disk means a full rebuild"
 fi
 
 # --- summary ---

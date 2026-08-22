@@ -40,9 +40,13 @@ infra/
   restrict for test), 3306 only from members of the same SG (`self`) — ready for
   the future DB host, SSH closed (the CI deploy job allowlists the runner IP per
   run; set `admin_ssh_cidrs` for a permanent rule), IMDSv2 enforced, EBS encrypted.
-- **Two environments, one module.** `test` has TLS/Let's Encrypt turned OFF
-  (`enable_tls: false` in `ansible/group_vars/test.yml`) so deploys there never
-  consume LE rate limits or affect production. Distinct VPC CIDRs allow future
+- **Two environments, one module.** Both run TLS, each with its own Let's
+  Encrypt certificate — `test` covers `test.terminaltwister.com` alone rather
+  than sharing production's. Production sends HSTS with `includeSubDomains`,
+  which covers every name under the apex, so a plain-HTTP test site would be
+  unreachable from any browser that had visited production. Separate
+  certificates also keep production's private key off the disposable box and let
+  each host renew independently via HTTP-01. Distinct VPC CIDRs allow future
   peering.
 - **Two recovery layers, on purpose.** The nightly Ansible backup puts content
   in S3 with 90 days of depth; DLM snapshots keep the last 7 days of the whole

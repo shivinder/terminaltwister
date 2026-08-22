@@ -62,23 +62,6 @@
 - name: Flush handlers so nginx is live before the install check
   ansible.builtin.meta: flush_handlers
 
-# --- Optional headless install (skips the web installer) ---
-- name: Check whether WordPress is already installed
-  ansible.builtin.command: wp core is-installed --path={{ wp_root }}
-  register: wp_installed
-  failed_when: false
-  changed_when: false
-  become_user: www-data
-
-- name: Install WordPress site
-  ansible.builtin.command: >
-    wp core install --path={{ wp_root }}
-    --url={{ wp_site_url }}
-    --title="{{ wp_site_title }}"
-    --admin_user={{ wp_admin_user }}
-    --admin_password={{ wp_admin_password }}
-    --admin_email={{ admin_email }}
-    --skip-email
-  when: wp_auto_install and wp_installed.rc != 0
-  become_user: www-data
-  no_log: true
+# The headless install lives in the wp_install role, which runs after tls.
+# wp core install records the site's own URL and nothing revisits it, so it must
+# not run until a certificate exists — see roles/wp_install/README.md.

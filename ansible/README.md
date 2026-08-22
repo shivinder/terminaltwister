@@ -18,9 +18,10 @@ ansible/
     ├── lemp_stack/           # Step 2: nginx, MariaDB, PHP-FPM
     ├── wordpress/            # Step 3: WordPress, WP-CLI, vhost
     ├── tls/                  # Step 4: Let's Encrypt
-    ├── caching/              # Step 5: OPcache, Redis, FastCGI cache
-    ├── wp_hardening/         # Step 6: WP/nginx hardening, rate limits
-    └── ops/                  # Step 7: backups, monitoring
+    ├── wp_install/           # Step 5: wp core install (after the cert exists)
+    ├── caching/              # Step 6: OPcache, Redis, FastCGI cache
+    ├── wp_hardening/         # Step 7: WP/nginx hardening, rate limits
+    └── ops/                  # Step 8: backups, monitoring
 ```
 
 ## Prerequisites
@@ -48,7 +49,10 @@ ansible-vault encrypt group_vars/all/vault.yml
 # Run everything:
 ansible-playbook site.yml --ask-vault-pass
 
-# Or one step at a time (tags: base, lemp, wordpress, tls, caching, hardening, ops):
+# Or one step at a time (tags: base, lemp, wordpress, tls, install, caching,
+# hardening, ops). Note `wordpress` no longer installs WordPress — that is
+# `install`, which runs after `tls` so the site URL is only recorded once a
+# certificate exists. A first run needs the full site.yml regardless:
 ansible-playbook site.yml --tags caching --ask-vault-pass
 ```
 

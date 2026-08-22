@@ -1,7 +1,8 @@
 # Test environment — test.terminaltwister.com
-# TLS (Let's Encrypt) is OFF for this environment (enable_tls: false in
-# ansible/group_vars/test.yml), so WordPress can be deployed and torn down
-# here without consuming Let's Encrypt rate limits or touching production.
+# TLS is ON here (enable_tls: true in ansible/group_vars/test.yml), with a
+# certificate covering test.terminaltwister.com alone. Production sends HSTS
+# with includeSubDomains, which covers this name too, so anything short of real
+# HTTPS is unreachable from a browser that has visited production.
 
 module "wordpress" {
   source = "../../modules/wordpress"

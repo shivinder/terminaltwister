@@ -1,11 +1,23 @@
 ---
-# Test — test.terminaltwister.com (TLS OFF: no Let's Encrypt issuance,
-# so test deploys never hit LE rate limits or affect production)
+# Test — test.terminaltwister.com (TLS ON, own certificate)
+#
+# Production sends HSTS with includeSubDomains, which covers every name under
+# terminaltwister.com — this one included. A browser that has visited production
+# therefore refuses plain HTTP here and offers no way to click through, so
+# serving real HTTPS is what makes that header honest rather than something to
+# work around.
+#
+# Its own certificate, not a copy of production's: HTTP-01 validates each name
+# against whichever host its DNS points at, so this box renews independently,
+# and production's private key never lands on the environment built to be thrown
+# away. Rate limits are not a factor — the 5-duplicates-per-week ceiling is per
+# exact name set, and this set is test.terminaltwister.com alone.
+#
 # Network values must match infra/envs/test/main.tf
 
 domain: test.terminaltwister.com
 www_alias: false
-enable_tls: false
+enable_tls: true
 wp_site_title: "Terminal Twister (test)"
 
 # Must match `environment` in infra/envs/test/main.tf — it is the CloudWatch

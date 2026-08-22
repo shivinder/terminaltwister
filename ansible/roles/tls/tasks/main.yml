@@ -2,6 +2,46 @@
 # All tasks are skipped when enable_tls is false
 # (e.g., TLS terminated at an ALB or CloudFront instead).
 
+# --- Pre-flight: fail before certbot, with the actual cause named ---
+#
+# certbot --webroot proves control by having Let's Encrypt fetch a file over
+# HTTP from whatever each name resolves to. If a record is missing or points
+# elsewhere, issuance fails several screens into certbot's output, and the play
+# dies leaving the later roles (caching, hardening, ops) unrun.
+
+- name: Resolve every name the certificate will cover
+  ansible.builtin.command: getent ahostsv4 {{ item }}
+  register: tls_dns
+  failed_when: false
+  changed_when: false
+  loop: "{{ [domain] + (['www.' + domain] if www_alias else []) }}"
+  when: enable_tls
+
+# ansible_host, not ansible_default_ipv4.address: the instance sits behind an
+# Elastic IP, so its own interface holds a 10.x private address while DNS points
+# at the public one. ansible_host IS that public address — it is how this play
+# reached the host — and it is what Let's Encrypt will resolve and connect to.
+#
+# Every name is checked, not just the apex: www_alias puts a second name in the
+# same order, and ACME fails the whole order if any single one fails. A correct
+# apex record with a missing www is the likeliest way production trips on this.
+- name: Fail before certbot when a name does not point here
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+      - (ansible_host | default(inventory_hostname)) in item.stdout
+    fail_msg: >-
+      {{ item.item }} does not resolve to
+      {{ ansible_host | default(inventory_hostname) }}.
+      Let's Encrypt validates over HTTP against whatever this name resolves to,
+      so issuance would fail. Add or correct the A record, wait for it to
+      propagate, and re-run.
+    success_msg: "{{ item.item }} resolves here"
+  loop: "{{ tls_dns.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: enable_tls
+
 - name: Install certbot
   ansible.builtin.apt:
     name: certbot

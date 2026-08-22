@@ -1,0 +1,24 @@
+---
+# Runs AFTER the tls role, so wp_site_url is https only once a certificate
+# actually exists. See README.md in this role for why it is not part of the
+# wordpress role.
+
+- name: Check whether WordPress is already installed
+  ansible.builtin.command: wp core is-installed --path={{ wp_root }}
+  register: wp_installed
+  failed_when: false
+  changed_when: false
+  become_user: www-data
+
+- name: Install WordPress site
+  ansible.builtin.command: >
+    wp core install --path={{ wp_root }}
+    --url={{ wp_site_url }}
+    --title="{{ wp_site_title }}"
+    --admin_user={{ wp_admin_user }}
+    --admin_password={{ wp_admin_password }}
+    --admin_email={{ admin_email }}
+    --skip-email
+  when: wp_auto_install and wp_installed.rc != 0
+  become_user: www-data
+  no_log: true

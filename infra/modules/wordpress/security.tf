@@ -1,5 +1,15 @@
 resource "aws_security_group" "wordpress" {
-  name        = "${local.name}-sg"
+  # name_prefix rather than name, paired with create_before_destroy below.
+  #
+  # The SG name is ForceNew, so anything that renames it — a local.name change,
+  # a new environment — plans a replacement. Destroy-then-create is the default
+  # order, and AWS refuses to delete a group the instance's ENI still references
+  # (DependencyViolation), so such an apply dies halfway. Creating the
+  # replacement first and swapping the instance onto it removes the window.
+  #
+  # The suffix AWS appends is invisible to the deploy job: .gitlab-ci.yml finds
+  # this group by its Name TAG (tt-wp-<env>-sg), set below and unchanged.
+  name_prefix = "${local.name}-sg-"
   description = "WordPress ${var.environment}: web from allowed CIDRs, DB inside SG only"
   vpc_id      = aws_vpc.this.id
 
@@ -50,6 +60,10 @@ resource "aws_security_group" "wordpress" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 
   tags = merge(local.common_tags, { Name = "${local.name}-sg" })
