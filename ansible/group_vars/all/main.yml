@@ -13,7 +13,7 @@ timezone: UTC
 
 # --- Admin system user (created by base_hardening) ---
 system_user: deploy
-system_user_ssh_key: "ssh-ed25519 AAAA...REPLACE_WITH_YOUR_PUBLIC_KEY"
+system_user_ssh_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM/y6VD1BqJkvnmYidvxJiXlNaeD/XY8PTTVY8QB3z9C MacBook Personal"
 system_user_nopasswd_sudo: true
 
 # --- SSH ---

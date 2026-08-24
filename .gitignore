@@ -23,3 +23,10 @@ plan.cache
 
 # --- Ansible ---
 *.retry
+
+# Vault password files. group_vars/all/vault.yml is committed ENCRYPTED; the
+# password that opens it must never land in the repo. In CI it arrives as the
+# ANSIBLE_VAULT_PASSWORD variable and is written to /tmp, outside the checkout.
+.vault_pass
+vault_pass*
+*.vaultpass

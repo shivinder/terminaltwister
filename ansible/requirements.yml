@@ -1,5 +1,16 @@
 ---
+# Upper bounds, not exact pins: the image is rebuilt rarely, so an unbounded
+# `latest` means a routine rebuild can silently pull a major release that has
+# removed something this repo uses. That has already happened once here —
+# community.general 12.0.0 dropped the `yaml` stdout callback ansible.cfg used
+# to name, which kills every ansible job at startup.
+#
+# community.mysql is the live one: it deprecated mysql_user/mysql_db (used
+# throughout roles/lemp_stack) and schedules their removal for 6.0.0.
 collections:
   - name: community.general
+    version: "<14.0.0"
   - name: community.mysql
+    version: "<6.0.0" # mysql_user/mysql_db are removed in 6.0.0
   - name: ansible.posix
+    version: "<3.0.0"

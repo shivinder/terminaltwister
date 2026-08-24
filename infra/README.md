@@ -190,10 +190,18 @@ risk quite apart from snapshot cost, and one the backup alarm above will catch.
 
 ## After apply
 
-1. Put `public_ip` into `ansible/inventory/hosts.ini` and your DNS
-   (A records for the apex and `www` in production; `test.` for test).
+1. Point DNS at `public_ip` (A records for the apex and `www` in production;
+   `test.` for test). This is the one manual step between apply and deploy —
+   the `tls` role validates over HTTP-01 and the smoke test fetches the site by
+   name, so both need the record live first. Every destroy/recreate cycle
+   allocates a fresh EIP, so this recurs each time.
+
+   `ansible/inventory/hosts.ini` no longer needs touching for CI: the deploy
+   jobs resolve the instance by its `tt-wp-<env>` Name tag and generate their
+   own inventory. That file is for local runs only.
 2. Run the `deploy-test` / `deploy-production` CI job — it resolves the
-   security group by tag automatically, no CI variable needed.
+   security group and the instance IP by tag automatically, no CI variable
+   needed, and fails with one clear line if DNS isn't pointing at the box yet.
 3. **Confirm the backup-alert subscription** — see below. Skip this and the
    alarm has nowhere to deliver.
 4. Once a snapshot and a backup exist, **rehearse a restore of each** — see

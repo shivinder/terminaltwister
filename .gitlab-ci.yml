@@ -103,10 +103,21 @@ build-image:
       --dockerfile "$CI_PROJECT_DIR/ansible/Dockerfile"
       --destination "$ANSIBLE_IMAGE"
   rules:
+    # Automatic when the image's inputs change.
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       changes:
         - ansible/Dockerfile
         - ansible/requirements.yml
+    # Otherwise still offered as a button. Without this the image only ever gets
+    # built by a commit that happens to touch those two files — so on a fresh
+    # project (or after the registry is cleaned out) ansible-lint and the deploy
+    # jobs fail on an image that was never pushed, which reads as a broken
+    # pipeline rather than a missing prerequisite.
+    # allow_failure so this manual job does not block the whole pipeline: a
+    # `when: manual` declared in `rules` is blocking by default.
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      allow_failure: true
 
 # =====================  terraform  =====================
 #
@@ -283,6 +294,43 @@ ansible-lint:
       --filters "Name=tag:Name,Values=tt-wp-${ENVIRONMENT}-sg"
       --query 'SecurityGroups[0].GroupId' --output text)
     - test "$SG_ID" != "None"  # fail fast if the env's infra isn't applied yet
+    # Same trick for the instance's address: Terraform tags it Name=tt-wp-<env>
+    # (local.name in modules/wordpress/main.tf). Resolving it here rather than
+    # committing it means a destroy/recreate cycle needs no commit — the EIP is
+    # reallocated each time, and inventory/hosts.ini would be stale immediately.
+    - WP_IP=$(aws ec2 describe-instances
+      --filters "Name=tag:Name,Values=tt-wp-${ENVIRONMENT}"
+      "Name=instance-state-name,Values=running"
+      --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+    - test "$WP_IP" != "None"  # infra not applied yet, or the instance isn't running
+    # The [wordpress:children] block is NOT optional. site.yml targets
+    # `hosts: wordpress`; an inventory defining only [test] matches zero hosts,
+    # and Ansible reports "no hosts matched" as a SUCCESS. A green deploy that
+    # did nothing is worse than a red one.
+    - |
+      cat > /tmp/inventory.ini <<EOF
+      [${ENVIRONMENT}]
+      wp-${ENVIRONMENT} ansible_host=${WP_IP} ansible_user=ubuntu
+
+      [wordpress:children]
+      ${ENVIRONMENT}
+      EOF
+    # DNS has to point at this box before the play runs: the tls role validates
+    # over HTTP-01 and the smoke test curls the site by name. Checking here turns
+    # a forgotten A record into one clear line instead of a Let's Encrypt failure
+    # five roles deep that reads like a TLS bug.
+    # awk/python3, not `grep -oP` + getent — the runner is Alpine, so grep is
+    # BusyBox and has no -P, and python3 is the base image.
+    - DOMAIN=$(awk '/^domain:/ {print $2}' ansible/group_vars/${ENVIRONMENT}.yml)
+    - DNS_IP=$(python3 -c "import socket,sys; print(socket.gethostbyname(sys.argv[1]))" "$DOMAIN" 2>/dev/null || true)
+    # Block scalar, not a plain one: an unquoted "FATAL: ..." contains a
+    # colon-space and YAML would read the whole line as a mapping.
+    - |
+      if [ "$DNS_IP" != "$WP_IP" ]; then
+        echo "FATAL - $DOMAIN resolves to '${DNS_IP:-nothing}', but the $ENVIRONMENT instance is $WP_IP."
+        echo "Point the A record at $WP_IP, let it propagate, then re-run this job."
+        exit 1
+      fi
     # Temporarily allow this runner's IP to reach SSH on the env's SG
     - RUNNER_IP=$(curl -s https://checkip.amazonaws.com)
     - aws ec2 authorize-security-group-ingress
@@ -291,6 +339,7 @@ ansible-lint:
   script:
     - cd ansible
     - ansible-playbook site.yml
+      -i /tmp/inventory.ini
       --limit $ENVIRONMENT
       --vault-password-file /tmp/vault_pass
       -e ansible_ssh_private_key_file=~/.ssh/deploy_key

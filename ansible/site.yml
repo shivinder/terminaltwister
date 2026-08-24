@@ -8,6 +8,31 @@
   hosts: wordpress
   become: true
 
+  pre_tasks:
+    # Ansible asks for a vault password only for files that are actually
+    # encrypted — a plaintext group_vars/all/vault.yml loads as ordinary
+    # variables and --vault-password-file is silently ignored. Without this
+    # check the shipped placeholders deploy green, and the site comes up with a
+    # database password that is sitting in git in cleartext. Nothing else in the
+    # run would notice, which is exactly why the check is here.
+    - name: Refuse to run with placeholder secrets
+      ansible.builtin.assert:
+        that:
+          - "'CHANGE_ME' not in wp_db_password"
+          - "'CHANGE_ME' not in wp_admin_password"
+          - "'REPLACE_WITH_YOUR_PUBLIC_KEY' not in system_user_ssh_key"
+          - wp_db_password | length >= 16
+          - wp_admin_password | length >= 16
+        fail_msg: >-
+          group_vars/all/vault.yml or group_vars/all/main.yml still holds the
+          placeholders this repo ships with. Generate real values, run
+          `ansible-vault encrypt group_vars/all/vault.yml`, and set
+          ANSIBLE_VAULT_PASSWORD in GitLab CI/CD variables.
+        success_msg: "Secrets look real"
+        quiet: true
+      run_once: true
+      tags: [always]
+
   roles:
     - { role: base_hardening, tags: [base] }        # Step 1: OS + SSH hardening, ufw, fail2ban
     - { role: lemp_stack,     tags: [lemp] }        # Step 2: nginx, MariaDB, PHP-FPM
