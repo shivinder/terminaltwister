@@ -1,6 +1,7 @@
 resource "aws_s3_bucket" "backups" {
-  bucket = var.backup_bucket_name
-  tags   = merge(local.common_tags, { Name = var.backup_bucket_name })
+  bucket        = var.backup_bucket_name
+  force_destroy = var.backup_bucket_force_destroy
+  tags          = merge(local.common_tags, { Name = var.backup_bucket_name })
 }
 
 resource "aws_s3_bucket_public_access_block" "backups" {

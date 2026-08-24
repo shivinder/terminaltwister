@@ -66,6 +66,17 @@ variable "backup_bucket_name" {
   type        = string
 }
 
+variable "backup_bucket_force_destroy" {
+  description = <<-EOT
+    Let `terraform destroy` delete the backup bucket along with every object and
+    version inside it. Off by default so production cannot lose its backups to a
+    stray destroy; on only for test, which exists to be torn down. Without this,
+    destroy fails with BucketNotEmpty the moment one nightly backup has run.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "backup_expiration_days" {
   type    = number
   default = 90

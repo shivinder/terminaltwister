@@ -5,6 +5,47 @@
 #   plan      - terraform plan per environment (report visible in MR/pipeline)
 #   apply     - terraform apply per environment (MANUAL)
 #   deploy    - ansible playbook per environment (MANUAL)
+#   destroy   - terraform destroy (MANUAL; test is one click, production is not)
+#
+# ---------------------------------------------------------------------------
+# CHOOSING AN ENVIRONMENT
+#
+# Two independent ways, and you normally want the first:
+#
+# 1. Just click the job. Every apply/deploy/destroy job is manual, and the
+#    environments are separate Terraform root modules with separate state, so
+#    playing `tf-apply-test` cannot touch production no matter what production
+#    is doing. Push to the default branch, open the pipeline, press play on the
+#    one you want. Nothing needs to be told anything.
+#
+# 2. Set TARGET_ENV when you want a pipeline that only *contains* one
+#    environment's jobs. Build > Pipelines > Run pipeline, pick from the
+#    dropdown below. `both` (the default, and what a git push gets you) plans
+#    both and offers both sets of buttons; `test` or `production` builds a
+#    pipeline with only that environment's jobs in it.
+#
+# Use 2 when you want the pipeline itself to be unambiguous — a destroy run, or
+# a change you only want planned against one environment. Use 1 the rest of the
+# time. Neither is a mode you have to leave: the next push is `both` again.
+#
+# Jobs are NOT chained across environments. `needs: []` on the manual jobs means
+# each one is playable on its own — you can deploy to production without first
+# playing its apply, and you can destroy test without playing anything.
+#
+# DESTROYING
+#
+# test:       Deployments > Environments > `test` > the stop (trash) button, or
+#             play `tf-destroy-test` in the pipeline. Same job either way.
+# production: deliberately has no stop button. Run a pipeline with BOTH
+#             TARGET_ENV=production and CONFIRM_DESTROY=destroy-production, and
+#             the job only then exists to be played. Anything less and it is not
+#             in the pipeline at all.
+#
+# Note that destroying test deletes its backup bucket and every version in it
+# (force_destroy, set only for test in envs/test/main.tf). Production's bucket
+# has no such flag, so a destroy there fails on a non-empty bucket rather than
+# emptying it — one more thing standing between you and an accident.
+# ---------------------------------------------------------------------------
 #
 # Terraform state lives in the manually-created S3 bucket
 # terminaltwister-tfstate (ap-southeast-2), one key per environment:
@@ -33,10 +74,19 @@
 # Security group IDs are NOT stored as variables — the deploy jobs resolve
 # them at run time from the SG's Name tag (tt-wp-<env>-sg, set by Terraform).
 
-stages: [build, validate, plan, apply, deploy]
+stages: [build, validate, plan, apply, deploy, destroy]
 
 variables:
   ANSIBLE_IMAGE: $CI_REGISTRY_IMAGE/ansible-runner:latest
+
+  TARGET_ENV:
+    value: "both"
+    options: ["both", "test", "production"]
+    description: "Which environment's jobs to put in this pipeline. 'both' is what a push gets."
+
+  CONFIRM_DESTROY:
+    value: ""
+    description: "Type destroy-production (with TARGET_ENV=production) to make tf-destroy-production exist. Leave empty otherwise."
 
 # =====================  ansible runner image  =====================
 
@@ -59,6 +109,12 @@ build-image:
         - ansible/requirements.yml
 
 # =====================  terraform  =====================
+#
+# One job per environment rather than parallel:matrix. Matrix cannot give each
+# entry its own `environment:` + `on_stop`, which is what puts the stop button
+# on the Environments page — and per-entry rules are what TARGET_ENV needs.
+# Jobs are also named tf-apply-test rather than "tf-apply: [test]", which reads
+# better on the button you are about to press against real infrastructure.
 
 .tf:
   image:
@@ -67,18 +123,35 @@ build-image:
   variables:
     TF_ROOT: infra/envs/${ENVIRONMENT}
     TF_IN_AUTOMATION: "true"
-  parallel:
-    matrix:
-      - ENVIRONMENT: [test, production]
   before_script:
     - cd ${TF_ROOT}
     - terraform init  # S3 backend configured in providers.tf; AWS creds from CI variables
+
+# Per-environment settings shared by plan/apply/deploy/destroy. resource_group
+# serialises everything touching one environment: an apply running mid-deploy
+# would revoke the runner's temporary SSH rule and break the play, and a destroy
+# racing either is worse. Production's group is a separate queue, so test work
+# never waits on it.
+.env-test:
+  variables:
+    ENVIRONMENT: test
+  resource_group: env-test
+
+.env-production:
+  variables:
+    ENVIRONMENT: production
+  resource_group: env-production
 
 tf-validate:
   extends: .tf
   stage: validate
   # Runs on merge requests, where protected AWS credentials are NOT exposed.
-  # Validation needs no state, so skip the backend entirely.
+  # Validation needs no state, so skip the backend entirely. Both environments
+  # every time regardless of TARGET_ENV — it is a syntax check, it costs
+  # nothing, and it is exactly the wrong thing to narrow.
+  parallel:
+    matrix:
+      - ENVIRONMENT: [test, production]
   before_script:
     - cd ${TF_ROOT}
     - terraform init -backend=false
@@ -89,7 +162,7 @@ tf-validate:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
-tf-plan:
+.tf-plan:
   extends: .tf
   stage: plan
   script:
@@ -98,22 +171,87 @@ tf-plan:
     paths:
       - ${TF_ROOT}/plan.cache
     expire_in: 1 week
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
-tf-apply:
-  extends: .tf
+# Every rule below is written out rather than shared through an anchor. The
+# condition is one line, it differs by a `when:` between plan and apply, and on
+# jobs that can delete infrastructure the gate should be readable where the job
+# is — not one indirection away.
+tf-plan-test:
+  extends: [.tf-plan, .env-test]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TARGET_ENV =~ /^(both|test)$/
+
+tf-plan-production:
+  extends: [.tf-plan, .env-production]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TARGET_ENV =~ /^(both|production)$/
+
+# `needs` on the applies: take the plan from this pipeline, but do not wait for
+# the other environment's stage to finish before becoming playable.
+tf-apply-test:
+  extends: [.tf, .env-test]
   stage: apply
-  # Shared with the deploy job for this environment: an apply running mid-deploy
-  # would revoke the runner's temporary SSH rule and break the play.
-  resource_group: env-${ENVIRONMENT}
   script:
     - terraform apply -auto-approve plan.cache
     - terraform output
-  dependencies:
-    - tf-plan
+  needs: [tf-plan-test]  # also how plan.cache gets here
+  environment:
+    name: test
+    url: https://test.terminaltwister.com
+    on_stop: tf-destroy-test
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TARGET_ENV =~ /^(both|test)$/
+      when: manual
+
+tf-apply-production:
+  extends: [.tf, .env-production]
+  stage: apply
+  script:
+    - terraform apply -auto-approve plan.cache
+    - terraform output
+  needs: [tf-plan-production]  # also how plan.cache gets here
+  # No on_stop on purpose: that would put a one-click stop button next to
+  # production on the Environments page. Destroying production goes through
+  # tf-destroy-production below, which takes two variables to even appear.
+  environment:
+    name: production
+    url: https://terminaltwister.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TARGET_ENV =~ /^(both|production)$/
+      when: manual
+
+# =====================  destroy  =====================
+#
+# needs: [] so these do not sit behind the blocking manual apply jobs — a
+# manual job declared in `rules` defaults to allow_failure: false, so an
+# unplayed apply blocks every later stage until something says otherwise.
+# Tearing down test must not require playing an apply first.
+
+tf-destroy-test:
+  extends: [.tf, .env-test]
+  stage: destroy
+  needs: []
+  script:
+    - terraform destroy -auto-approve
+  environment:
+    name: test
+    action: stop
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TARGET_ENV =~ /^(both|test)$/
+      when: manual
+      allow_failure: true
+
+tf-destroy-production:
+  extends: [.tf, .env-production]
+  stage: destroy
+  needs: []
+  script:
+    # Belt and braces: the rule below already gates this, but the rule lives in
+    # a file anyone can edit, and a wrong destroy here is unrecoverable.
+    - test "$CONFIRM_DESTROY" = "destroy-production"
+    - terraform destroy -auto-approve
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TARGET_ENV == "production" && $CONFIRM_DESTROY == "destroy-production"
       when: manual
 
 # =====================  ansible  =====================
@@ -131,20 +269,18 @@ ansible-lint:
 .deploy-ansible:
   stage: deploy
   image: $ANSIBLE_IMAGE
-  # Shared with tf-apply for this environment — see the note there.
-  resource_group: env-${DEPLOY_ENV}
+  # Independently playable — deploying a playbook change to a running box should
+  # not require playing that environment's apply first. See the note on destroy.
+  needs: []
   variables:
     ANSIBLE_HOST_KEY_CHECKING: "False"
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
   before_script:
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - cp "$SSH_PRIVATE_KEY" ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
     - echo "$ANSIBLE_VAULT_PASSWORD" > /tmp/vault_pass && chmod 600 /tmp/vault_pass
     # Resolve the env's SG by its Name tag — no stored variable, never stale
     - SG_ID=$(aws ec2 describe-security-groups
-      --filters "Name=tag:Name,Values=tt-wp-${DEPLOY_ENV}-sg"
+      --filters "Name=tag:Name,Values=tt-wp-${ENVIRONMENT}-sg"
       --query 'SecurityGroups[0].GroupId' --output text)
     - test "$SG_ID" != "None"  # fail fast if the env's infra isn't applied yet
     # Temporarily allow this runner's IP to reach SSH on the env's SG
@@ -155,14 +291,14 @@ ansible-lint:
   script:
     - cd ansible
     - ansible-playbook site.yml
-      --limit $DEPLOY_ENV
+      --limit $ENVIRONMENT
       --vault-password-file /tmp/vault_pass
       -e ansible_ssh_private_key_file=~/.ssh/deploy_key
   after_script:
     # New shell — re-resolve, then always revoke the temporary SSH rule,
     # even if the play failed
     - SG_ID=$(aws ec2 describe-security-groups
-      --filters "Name=tag:Name,Values=tt-wp-${DEPLOY_ENV}-sg"
+      --filters "Name=tag:Name,Values=tt-wp-${ENVIRONMENT}-sg"
       --query 'SecurityGroups[0].GroupId' --output text)
     - RUNNER_IP=$(curl -s https://checkip.amazonaws.com)
     - aws ec2 revoke-security-group-ingress
@@ -170,11 +306,19 @@ ansible-lint:
       --protocol tcp --port 22 --cidr "${RUNNER_IP}/32" || true
 
 deploy-test:
-  extends: .deploy-ansible
-  variables:
-    DEPLOY_ENV: test
+  extends: [.deploy-ansible, .env-test]
+  environment:
+    name: test
+    url: https://test.terminaltwister.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TARGET_ENV =~ /^(both|test)$/
+      when: manual
 
 deploy-production:
-  extends: .deploy-ansible
-  variables:
-    DEPLOY_ENV: production
+  extends: [.deploy-ansible, .env-production]
+  environment:
+    name: production
+    url: https://terminaltwister.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TARGET_ENV =~ /^(both|production)$/
+      when: manual

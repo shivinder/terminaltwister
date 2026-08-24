@@ -20,6 +20,12 @@ module "wordpress" {
   backup_bucket_name = "terminaltwister-backups-test"
   enable_cloudwatch  = false
 
+  # Test is built to be destroyed and rebuilt from CI, and the bucket is
+  # versioned — without this, the first `terraform destroy` after a nightly
+  # backup has run fails with BucketNotEmpty. Production deliberately leaves
+  # this at its default of false.
+  backup_bucket_force_destroy = true
+
   # Empty by default, so no SNS topic and no alarm are created here.
   alarm_email = var.alarm_email
 
