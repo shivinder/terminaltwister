@@ -6,6 +6,13 @@ module "wordpress" {
 
   environment = "production"
 
+  # dns_name is deliberately unset. The apex still serves the live site from
+  # the old host, and setting it makes the next apply repoint
+  # terminaltwister.com at this instance — uncommenting the line below IS the
+  # cutover, not a setting to tidy up beforehand. www is a CNAME to the apex,
+  # so it follows without a record of its own.
+  # dns_name = "terminaltwister.com"
+
   # Distinct CIDRs from test (10.10.0.0/16) so the VPCs could be peered later.
   # Must match vpc_cidr in ansible/group_vars/production.yml.
   vpc_cidr            = "10.0.0.0/16"

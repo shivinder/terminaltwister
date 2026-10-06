@@ -72,8 +72,30 @@ mv "{{ wp_root }}/wp-content" "{{ wp_root }}/wp-content.pre-restore.$SUFFIX"
 tar xzf "$CONTENT_FILE" -C "{{ wp_root }}"
 chown -R www-data:www-data "{{ wp_root }}/wp-content"
 
+{% if enable_redis_cache %}
+# Redis still holds the pre-restore site (alloptions, active_plugins, the theme)
+# and redis-cache sets no TTLs, so nothing would age it out. Whenever the
+# object-cache drop-in is active, now or once the next deploy re-enables it,
+# WordPress would read those values instead of the tables just restored.
+log "flushing the Redis object cache"
+redis-cli FLUSHALL > /dev/null
+{% endif %}
+{% if enable_fastcgi_cache %}
+# Otherwise nginx keeps serving pages cached from the pre-restore site for up to
+# {{ fastcgi_cache_valid }}.
+log "purging the nginx page cache"
+find "{{ fastcgi_cache_path }}" -mindepth 1 -delete
+{% endif %}
+
 log "restore complete: $TS"
 log "previous wp-content kept at {{ wp_root }}/wp-content.pre-restore.$SUFFIX — remove it once verified"
+{% if enable_redis_cache %}
+# The restored wp-content can predate the Redis setup (a backup taken on another
+# host never had it), and the caching role installs the plugin and its
+# object-cache.php drop-in only where they are missing.
+log "next: re-run this environment's deploy job, so the caching role can put back"
+log "      the redis-cache plugin and its object-cache.php drop-in if the backup lacks them"
+{% endif %}
 
 # Deliberately not automated. wp-config.php records DB_HOST as this instance's
 # PRIVATE IP, which changes whenever the instance is rebuilt — dropping an old

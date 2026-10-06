@@ -1,6 +1,7 @@
 # Pipeline: infra (Terraform) + config (Ansible), per environment.
 #
-#   build     - ansible runner image (only when Dockerfile/requirements change)
+#   build     - ansible runner image (when Dockerfile/requirements change, and on
+#               every Run pipeline; deploys in that pipeline wait for it)
 #   validate  - terraform validate (test+production) and ansible syntax check
 #   plan      - terraform plan per environment (report visible in MR/pipeline)
 #   apply     - terraform apply per environment (MANUAL)
@@ -28,7 +29,8 @@
 # a change you only want planned against one environment. Use 1 the rest of the
 # time. Neither is a mode you have to leave: the next push is `both` again.
 #
-# Jobs are NOT chained across environments. `needs: []` on the manual jobs means
+# Jobs are NOT chained across environments. The manual jobs need nothing beyond
+# their own plan (applies) or an image build in the same pipeline (deploys), so
 # each one is playable on its own — you can deploy to production without first
 # playing its apply, and you can destroy test without playing anything.
 #
@@ -103,21 +105,19 @@ build-image:
       --dockerfile "$CI_PROJECT_DIR/ansible/Dockerfile"
       --destination "$ANSIBLE_IMAGE"
   rules:
-    # Automatic when the image's inputs change.
+    # On a push: only when the image's inputs changed. A pipeline started from
+    # Build > Pipelines > Run pipeline has no push to diff against, and GitLab
+    # evaluates `changes` as true there — so every Run pipeline rebuilds. That
+    # is also how a fresh project (or an emptied registry) gets its first image:
+    # run a pipeline by hand.
+    #
+    # Deliberately no manual fallback for pushes. The deploy jobs need this job,
+    # and a job that needs an unplayed manual job waits for it — a button here
+    # would hold every deploy until someone pressed it.
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       changes:
         - ansible/Dockerfile
         - ansible/requirements.yml
-    # Otherwise still offered as a button. Without this the image only ever gets
-    # built by a commit that happens to touch those two files — so on a fresh
-    # project (or after the registry is cleaned out) ansible-lint and the deploy
-    # jobs fail on an image that was never pushed, which reads as a broken
-    # pipeline rather than a missing prerequisite.
-    # allow_failure so this manual job does not block the whole pipeline: a
-    # `when: manual` declared in `rules` is blocking by default.
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-      allow_failure: true
 
 # =====================  terraform  =====================
 #
@@ -282,7 +282,14 @@ ansible-lint:
   image: $ANSIBLE_IMAGE
   # Independently playable — deploying a playbook change to a running box should
   # not require playing that environment's apply first. See the note on destroy.
-  needs: []
+  # The one thing a deploy waits for is an image build in this same pipeline:
+  # without it, a deploy pressed while build-image is still pushing runs on the
+  # previous :latest — after an ansible-core bump, the old version. optional,
+  # because a push that leaves the image's inputs alone has no build-image job,
+  # and then this behaves exactly like needs: [].
+  needs:
+    - job: build-image
+      optional: true
   variables:
     ANSIBLE_HOST_KEY_CHECKING: "False"
   before_script:
@@ -316,9 +323,11 @@ ansible-lint:
       ${ENVIRONMENT}
       EOF
     # DNS has to point at this box before the play runs: the tls role validates
-    # over HTTP-01 and the smoke test curls the site by name. Checking here turns
-    # a forgotten A record into one clear line instead of a Let's Encrypt failure
-    # five roles deep that reads like a TLS bug.
+    # over HTTP-01 and the smoke test curls the site by name. tf-apply sets the
+    # record itself where dns_name is set in infra/envs/<env>/main.tf; where it
+    # is not (production, until cutover) the record is still pointed by hand.
+    # Checking here turns a missing one into one clear line instead of a Let's
+    # Encrypt failure five roles deep that reads like a TLS bug.
     # awk/python3, not `grep -oP` + getent — the runner is Alpine, so grep is
     # BusyBox and has no -P, and python3 is the base image.
     - DOMAIN=$(awk '/^domain:/ {print $2}' ansible/group_vars/${ENVIRONMENT}.yml)
@@ -328,7 +337,8 @@ ansible-lint:
     - |
       if [ "$DNS_IP" != "$WP_IP" ]; then
         echo "FATAL - $DOMAIN resolves to '${DNS_IP:-nothing}', but the $ENVIRONMENT instance is $WP_IP."
-        echo "Point the A record at $WP_IP, let it propagate, then re-run this job."
+        echo "tf-apply-$ENVIRONMENT sets this record when dns_name is set in infra/envs/$ENVIRONMENT/main.tf;"
+        echo "otherwise point the A record at $WP_IP by hand. Let it propagate, then re-run this job."
         exit 1
       fi
     # Temporarily allow this runner's IP to reach SSH on the env's SG

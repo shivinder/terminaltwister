@@ -26,10 +26,10 @@ ansible/
 
 ## Prerequisites
 
-- Control machine: Ansible >= 2.15
+- Control machine: ansible-core >= 2.20 — Ubuntu 26.04 runs Python 3.14, which older releases cannot manage (the runner image uses 2.21)
 - EC2 instance running Ubuntu 26.04, reachable via SSH (user `ubuntu`, key auth)
 - EC2 security group: inbound 80, 443 open; 22 restricted to your IP
-- DNS A record for `domain` pointing at the instance's Elastic IP (required before the `tls` role)
+- DNS A record for `domain` pointing at the instance's Elastic IP (required before the `tls` role) — `tf-apply` creates it where `dns_name` is set in `infra/envs/<env>/main.tf`
 - Instance profile with `s3:PutObject` on the backup bucket (S3 backups) and
   `cloudwatch:PutMetricData` on `TerminalTwister/*` — the latter is granted
   unconditionally, because the backup reports success through it whether or not

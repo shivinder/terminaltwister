@@ -12,7 +12,7 @@ Let's Encrypt certificate + HTTPS enforcement.
 
 ## Prerequisites
 
-- **DNS A records must already point to this instance** — `domain`, and `www.domain` too when `www_alias` is set (Elastic IP recommended). Port 80 must be reachable. The pre-flight check above enforces this, so a missing record fails in seconds instead of part-way through certbot.
+- **DNS A records must already point to this instance** — `domain`, and `www.domain` too when `www_alias` is set (Elastic IP recommended). Terraform creates the `domain` record where `dns_name` is set in `infra/envs/<env>/main.tf`. Port 80 must be reachable. The pre-flight check above enforces this, so a missing record fails in seconds instead of part-way through certbot.
 - The [`wp_install`](../wp_install) role runs immediately after this one, so `wp core install` records an `https` URL only once issuance has actually succeeded.
 
 ## Backup and recovery

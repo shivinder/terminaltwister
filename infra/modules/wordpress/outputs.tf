@@ -1,6 +1,13 @@
 output "public_ip" {
-  description = "Elastic IP — use in ansible/inventory/hosts.ini and DNS A records"
+  description = "Elastic IP — use in ansible/inventory/hosts.ini for local runs, and in the DNS A record when dns_name is unset"
   value       = aws_eip.wordpress.public_ip
+}
+
+# Same reasoning as backup_alerts below: make "DNS is still a manual step" a
+# line in the tf-apply log rather than a deploy that fails its DNS check.
+output "dns_record" {
+  description = "Name Terraform keeps pointed at the Elastic IP, or a warning when dns_name is unset"
+  value       = try(aws_route53_record.wordpress[0].fqdn, "DISABLED — point the A record at public_ip by hand before deploying")
 }
 
 output "private_ip" {

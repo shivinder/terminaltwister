@@ -11,7 +11,7 @@ infra/
 ├── initial-tasks/         # one-time bootstrap: creates the tfstate bucket (local state)
 ├── scripts/
 │   └── preflight.sh       # pre-apply checks: creds, key pair, buckets, versions
-├── modules/wordpress/     # VPC, subnets, SG, EC2, EIP, S3, IAM, alerting, snapshots
+├── modules/wordpress/     # VPC, subnets, SG, EC2, EIP, S3, IAM, alerting, snapshots, DNS record
 │   ├── main.tf            # VPC, public + private subnets, IGW, routing
 │   ├── security.tf        # security group (restricted)
 │   ├── ec2.tf             # Ubuntu 26.04 LTS instance + Elastic IP
@@ -19,6 +19,7 @@ infra/
 │   ├── iam.tf             # instance role: s3 backup write, metric publish, optional CW agent
 │   ├── monitoring.tf      # SNS topic + backup-failure alarm (only if alarm_email set)
 │   ├── snapshots.tf       # DLM nightly root-volume snapshots (only if retention > 0)
+│   ├── dns.tf             # Route53 A record → Elastic IP (only if dns_name set)
 │   ├── variables.tf
 │   └── outputs.tf
 └── envs/                  # each env: providers.tf (terraform+backend+provider),
@@ -127,19 +128,21 @@ cd infra/envs/test
 terraform init
 terraform plan
 terraform apply
-terraform output    # public_ip, private_ip, instance_id, security_group_id,
+terraform output    # public_ip, dns_record, private_ip, instance_id, security_group_id,
                     # backup_bucket, backup_alerts, root_volume_snapshots
 ```
 
 **What a clean first apply looks like:** 21 resources added, none changed or
 destroyed — VPC, IGW, two subnets, route table + association, the VPC's adopted
 default SG and default route table, security group, EC2, EIP + association, six
-S3 resources, three IAM resources. Add three more (24) when `alarm_email` is
-set — an SNS topic, its email subscription and the backup alarm — and three more
-again (27) when `snapshot_retention_days` is above 0, as production has it: a
-DLM policy, its service role and that role's policy attachment. Test creates
-neither set and stays at 21. A wildly different count means something is off;
-read the diff before continuing.
+S3 resources, three IAM resources. Add one where `dns_name` is set, as test has
+it — the Route53 A record. Add three more when `alarm_email` is set — an SNS
+topic, its email subscription and the backup alarm — and three more again when
+`snapshot_retention_days` is above 0, as production has it: a DLM policy, its
+service role and that role's policy attachment. Test creates neither of those
+sets and lands on 22; production, with both and no `dns_name` until cutover, on
+27. A wildly different count means something is off; read the diff before
+continuing.
 
 **If apply fails with `BucketAlreadyExists`:** S3 bucket names are globally unique
 across all of AWS, so `terminaltwister-tfstate` or `terminaltwister-backups-test`
@@ -184,17 +187,27 @@ risk quite apart from snapshot cost, and one the backup alarm above will catch.
 |---|---|
 | `vpc_cidr` | `vpc_cidr` in `group_vars/<env>.yml` (ufw + DB user host pattern) |
 | `backup_bucket_name` | `backup_s3_bucket_name` in `group_vars/<env>.yml` |
-| output `public_ip` | `ansible_host` in `inventory/hosts.ini` + DNS A records |
+| `dns_name` | `domain` in `group_vars/<env>.yml` (the name the certificate is issued for) |
+| output `public_ip` | `ansible_host` in `inventory/hosts.ini` (local runs) + the DNS A record where `dns_name` is unset |
 | SG Name tag `tt-wp-<env>-sg` | Deploy jobs resolve the SG ID by this tag at run time |
 | `environment` | `environment_name` in `group_vars/<env>.yml` (backup alarm's CloudWatch dimension) |
 
 ## After apply
 
-1. Point DNS at `public_ip` (A records for the apex and `www` in production;
-   `test.` for test). This is the one manual step between apply and deploy —
-   the `tls` role validates over HTTP-01 and the smoke test fetches the site by
-   name, so both need the record live first. Every destroy/recreate cycle
-   allocates a fresh EIP, so this recurs each time.
+1. DNS. Where `dns_name` is set (test), the apply has already done it: `dns.tf`
+   ties an A record in the `terminaltwister.com` Route53 zone to the Elastic
+   IP, so a destroy/recreate cycle — which allocates a fresh EIP every time —
+   needs nothing done by hand. `terraform output dns_record` says which you
+   got. The zone itself is made by hand and only looked up; it also carries the
+   mail records, and no environment's destroy touches it.
+
+   Where `dns_name` is not set (production, until cutover), point the apex A
+   record at `public_ip` yourself; `www` is a CNAME to the apex and follows.
+   The `tls` role validates over HTTP-01 and the smoke test fetches the site by
+   name, so both need the record live before deploy. Setting
+   `dns_name = "terminaltwister.com"` in `envs/production/main.tf` hands the
+   apex to Terraform, and the next apply repoints the live site at this
+   instance — so that change is the cutover, not something to do ahead of it.
 
    `ansible/inventory/hosts.ini` no longer needs touching for CI: the deploy
    jobs resolve the instance by its `tt-wp-<env>` Name tag and generate their

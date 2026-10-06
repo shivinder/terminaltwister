@@ -9,6 +9,11 @@ module "wordpress" {
 
   environment = "test"
 
+  # Terraform keeps this name pointed at the Elastic IP, so a destroy/rebuild
+  # needs no DNS step before deploy. Must match domain in
+  # ansible/group_vars/test.yml.
+  dns_name = "test.terminaltwister.com"
+
   # Distinct CIDRs from production (10.0.0.0/16).
   # Must match vpc_cidr in ansible/group_vars/test.yml.
   vpc_cidr            = "10.10.0.0/16"

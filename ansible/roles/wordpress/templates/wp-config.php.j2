@@ -3,7 +3,9 @@
 
 define( 'DB_NAME', '{{ wp_db_name }}' );
 define( 'DB_USER', '{{ wp_db_user }}' );
-define( 'DB_PASSWORD', '{{ wp_db_password }}' );
+{# Escaped for a single-quoted PHP string, where \ and ' are the only special
+   characters: unescaped, either one in the vault password breaks this file. #}
+define( 'DB_PASSWORD', '{{ wp_db_password | replace("\\", "\\\\") | replace("'", "\\'") }}' );
 define( 'DB_HOST', '{{ wp_db_host }}' );
 define( 'DB_CHARSET', 'utf8mb4' );
 define( 'DB_COLLATE', '' );

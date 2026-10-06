@@ -113,3 +113,23 @@ variable "alarm_email" {
     error_message = "alarm_email must be a valid email address, or empty to disable alerting."
   }
 }
+
+# --- DNS ---
+variable "dns_name" {
+  description = "Name to point at the Elastic IP. Must match domain in ansible/group_vars/<env>.yml. Empty (the default) creates no record — see dns.tf."
+  type        = string
+  default     = ""
+
+  # Route53 rejects a name outside the zone too, but only at apply time, with
+  # the rest of the environment already half built.
+  validation {
+    condition     = var.dns_name == "" || var.dns_name == var.dns_zone || endswith(var.dns_name, ".${var.dns_zone}")
+    error_message = "dns_name must be dns_zone itself or a name under it, or empty to create no record."
+  }
+}
+
+variable "dns_zone" {
+  description = "Existing public Route53 hosted zone that dns_name lives in. Looked up, never created or destroyed here."
+  type        = string
+  default     = "terminaltwister.com"
+}

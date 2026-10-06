@@ -1,8 +1,12 @@
 # Ansible runner image — used both locally (make deploy) and by GitLab CI.
 FROM python:3.12-alpine
 
+# ansible-core is pinned to a minor series, so a rebuild only picks up patch
+# releases. Nothing older than 2.20 can manage these hosts: Ubuntu 26.04 runs
+# Python 3.14, and 2.17 (end-of-life) stopped at 3.12. 2.21 needs Python >= 3.12
+# on this side, which the base image provides.
 RUN apk add --no-cache openssh-client bash curl \
- && pip install --no-cache-dir "ansible-core==2.17.*" awscli
+ && pip install --no-cache-dir "ansible-core==2.21.*" awscli
 
 # Bake collections into the image so runs are fast and reproducible
 COPY requirements.yml /tmp/requirements.yml

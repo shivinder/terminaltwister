@@ -10,15 +10,21 @@
   changed_when: false
   become_user: www-data
 
+# argv, not a command string: the string form is split shell-style, so a quote,
+# backslash or space in the vault password would mangle it or fail the parse.
 - name: Install WordPress site
-  ansible.builtin.command: >
-    wp core install --path={{ wp_root }}
-    --url={{ wp_site_url }}
-    --title="{{ wp_site_title }}"
-    --admin_user={{ wp_admin_user }}
-    --admin_password={{ wp_admin_password }}
-    --admin_email={{ admin_email }}
-    --skip-email
+  ansible.builtin.command:
+    argv:
+      - wp
+      - core
+      - install
+      - "--path={{ wp_root }}"
+      - "--url={{ wp_site_url }}"
+      - "--title={{ wp_site_title }}"
+      - "--admin_user={{ wp_admin_user }}"
+      - "--admin_password={{ wp_admin_password }}"
+      - "--admin_email={{ admin_email }}"
+      - --skip-email
   when: wp_auto_install and wp_installed.rc != 0
   become_user: www-data
   no_log: true
