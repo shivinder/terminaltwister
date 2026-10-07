@@ -4,7 +4,7 @@ WordPress- and nginx-level hardening for a public-facing site.
 
 ## What it does
 
-- `server_tokens off` (hide nginx version)
+- `server_tokens off` (hide nginx version) — enforced on the stock line in `nginx.conf`, which Debian 13 already ships as `off`
 - Populates the snippets the vhost already includes:
   - **security-headers.conf** — X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy, HSTS (when TLS)
   - **wp-security.conf** — deny `xmlrpc.php`, dotfiles (except `.well-known`), `wp-config.php`, PHP in uploads, readme/license

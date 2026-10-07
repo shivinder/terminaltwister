@@ -1,12 +1,15 @@
 ---
 # --- nginx global hardening ---
 
+# An edit of the stock line, not a conf.d drop-in: nginx.conf sets
+# server_tokens itself, and nginx rejects a directive given twice in http {}.
+# Debian 13 ships it as `off`, so there this matches nothing and the packaged
+# file stays untouched; any other value is rewritten.
 - name: Hide nginx version
-  ansible.builtin.copy:
-    dest: /etc/nginx/conf.d/hardening.conf
-    mode: "0644"
-    content: |
-      server_tokens off;
+  ansible.builtin.replace:
+    path: /etc/nginx/nginx.conf
+    regexp: '^([ \t]*)server_tokens[ \t]+(?!off[ \t]*;)[^;]*;'
+    replace: '\1server_tokens off;'
   notify: Reload nginx
 
 - name: Define login rate-limit zone (http context)

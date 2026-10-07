@@ -5,6 +5,7 @@ OS baseline and access hardening.
 ## What it does
 
 - `apt dist-upgrade` + enables unattended security upgrades
+- Installs the baseline packages, including three that Debian's cloud image leaves out and the later roles rely on: `nftables` (fail2ban bans through it), `logrotate` and `acl`
 - Creates a non-root sudo user (`system_user`) with your SSH public key
 - Hardens sshd: no root login, no password auth, key-only, MaxAuthTries 3
 - ufw: default deny incoming, allow SSH/80/443

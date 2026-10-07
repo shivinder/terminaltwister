@@ -20,9 +20,10 @@ system_user_nopasswd_sudo: true
 ssh_port: 22
 
 # --- PHP ---
-# Must match what the Ubuntu release ships: 26.04 LTS carries PHP 8.5
-# (24.04 carried 8.3). Drives every php* package name and the FPM socket path.
-php_version: "8.5"
+# Must match what the Debian release ships: 13 (trixie) carries PHP 8.4.
+# Drives every php* package name and the FPM socket path. The release itself
+# is pinned in infra/modules/wordpress/ec2.tf — change the two together.
+php_version: "8.4"
 php_memory_limit: 256M
 php_upload_max_filesize: 64M
 php_post_max_size: 64M

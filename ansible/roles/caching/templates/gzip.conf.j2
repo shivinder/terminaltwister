@@ -1,5 +1,6 @@
 # {{ ansible_managed }}
-gzip on;
+# Tuning only. `gzip on;` is already in Debian's stock nginx.conf, and nginx
+# rejects a directive given twice in http {} — which is where conf.d/ lands.
 gzip_vary on;
 gzip_comp_level 5;
 gzip_min_length 256;

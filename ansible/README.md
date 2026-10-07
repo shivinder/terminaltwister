@@ -1,6 +1,6 @@
 # WordPress on EC2 — Ansible
 
-Provisions a public-facing, hardened, cached WordPress blog on **Ubuntu 26.04 LTS** (EC2 instance already created by Terraform). Stack: **nginx + MariaDB + PHP-FPM**, Let's Encrypt TLS, OPcache + Redis object cache + nginx FastCGI page cache.
+Provisions a public-facing, hardened, cached WordPress blog on **Debian 13 "trixie"** (EC2 instance already created by Terraform). Stack: **nginx + MariaDB + PHP-FPM**, Let's Encrypt TLS, OPcache + Redis object cache + nginx FastCGI page cache.
 
 ## Layout
 
@@ -26,14 +26,16 @@ ansible/
 
 ## Prerequisites
 
-- Control machine: ansible-core >= 2.20 — Ubuntu 26.04 runs Python 3.14, which older releases cannot manage (the runner image uses 2.21)
-- EC2 instance running Ubuntu 26.04, reachable via SSH (user `ubuntu`, key auth)
+- Control machine: ansible-core >= 2.18 — Debian 13 runs Python 3.13, which older releases cannot manage (the runner image uses 2.21)
+- EC2 instance running Debian 13, reachable via SSH (user `admin`, key auth)
 - EC2 security group: inbound 80, 443 open; 22 restricted to your IP
-- DNS A record for `domain` pointing at the instance's Elastic IP (required before the `tls` role) — `tf-apply` creates it where `dns_name` is set in `infra/envs/<env>/main.tf`
-- Instance profile with `s3:PutObject` on the backup bucket (S3 backups) and
-  `cloudwatch:PutMetricData` on `TerminalTwister/*` — the latter is granted
-  unconditionally, because the backup reports success through it whether or not
-  the CloudWatch agent is enabled. Both come from `infra/modules/wordpress/iam.tf`
+- DNS A record for `domain` pointing at the instance's Elastic IP (required by the closing smoke test, not by the `tls` role, which validates over DNS) — `tf-apply` creates it where `dns_name` is set in `infra/envs/<env>/main.tf`
+- Instance profile with `s3:PutObject` on the backup bucket (S3 backups),
+  `cloudwatch:PutMetricData` on `TerminalTwister/*` — granted unconditionally,
+  because the backup reports success through it whether or not the CloudWatch
+  agent is enabled — and, for TLS, write access to the `_acme-challenge` TXT
+  records of the certificate's names (`certificate_names`). All come from
+  `infra/modules/wordpress/iam.tf`
 
 ## Usage
 

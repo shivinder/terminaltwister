@@ -2,60 +2,57 @@
 # All tasks are skipped when enable_tls is false
 # (e.g., TLS terminated at an ALB or CloudFront instead).
 
-# --- Pre-flight: fail before certbot, with the actual cause named ---
+# Validation is DNS-01 through Route53: certbot proves control of each name by
+# publishing a TXT record at _acme-challenge.<name>, using the instance role
+# (certificate_names in infra/envs/<env>/main.tf, policy in
+# infra/modules/wordpress/iam.tf). Let's Encrypt never connects to this host, so
+# issuance does not depend on the A record, on port 80, or on a stale AAAA —
+# the certificate can exist before DNS points here.
 #
-# certbot --webroot proves control by having Let's Encrypt fetch a file over
-# HTTP from whatever each name resolves to. If a record is missing or points
-# elsewhere, issuance fails several screens into certbot's output, and the play
-# dies leaving the later roles (caching, hardening, ops) unrun.
+# The names below and certificate_names must agree. If Terraform grants fewer,
+# certbot fails with an AccessDenied on route53:ChangeResourceRecordSets.
 
-- name: Resolve every name the certificate will cover
-  ansible.builtin.command: getent ahostsv4 {{ item }}
-  register: tls_dns
-  failed_when: false
-  changed_when: false
-  loop: "{{ [domain] + (['www.' + domain] if www_alias else []) }}"
-  when: enable_tls
-
-# ansible_host, not ansible_default_ipv4.address: the instance sits behind an
-# Elastic IP, so its own interface holds a 10.x private address while DNS points
-# at the public one. ansible_host IS that public address — it is how this play
-# reached the host — and it is what Let's Encrypt will resolve and connect to.
-#
-# Every name is checked, not just the apex: www_alias puts a second name in the
-# same order, and ACME fails the whole order if any single one fails. A correct
-# apex record with a missing www is the likeliest way production trips on this.
-- name: Fail before certbot when a name does not point here
-  ansible.builtin.assert:
-    that:
-      - item.rc == 0
-      - (ansible_host | default(inventory_hostname)) in item.stdout
-    fail_msg: >-
-      {{ item.item }} does not resolve to
-      {{ ansible_host | default(inventory_hostname) }}.
-      Let's Encrypt validates over HTTP against whatever this name resolves to,
-      so issuance would fail. Add or correct the A record, wait for it to
-      propagate, and re-run.
-    success_msg: "{{ item.item }} resolves here"
-  loop: "{{ tls_dns.results }}"
-  loop_control:
-    label: "{{ item.item }}"
-  when: enable_tls
-
-- name: Install certbot
+- name: Install certbot and its Route53 plugin
   ansible.builtin.apt:
-    name: certbot
+    name:
+      - certbot
+      - python3-certbot-dns-route53
     state: present
   when: enable_tls
 
-- name: Obtain Let's Encrypt certificate (webroot — DNS must already point here)
+- name: Obtain Let's Encrypt certificate (DNS-01 via Route53)
   ansible.builtin.command: >
-    certbot certonly --webroot -w {{ wp_root }}
+    certbot certonly --dns-route53
     -d {{ domain }}{{ ' -d www.' + domain if www_alias else '' }}
     --expand --non-interactive --agree-tos -m {{ admin_email }}
   args:
     creates: /etc/letsencrypt/live/{{ domain }}/fullchain.pem
   when: enable_tls
+
+# A certificate that already exists — issued before this role used DNS-01, or
+# restored from a config backup taken then — keeps renewing the way it was
+# issued: over HTTP, through a vhost that no longer serves the challenge. That
+# would go unnoticed until the renewal timer started failing weeks later.
+# rc 0 = already Route53, 1 = something else, 2 = no renewal file to read.
+- name: Check how the certificate renews
+  ansible.builtin.command: >
+    grep -qx 'authenticator = dns-route53'
+    /etc/letsencrypt/renewal/{{ domain }}.conf
+  register: tls_renewal
+  failed_when: tls_renewal.rc > 1
+  changed_when: false
+  when: enable_tls
+
+# reconfigure rehearses a renewal with the new settings against Let's Encrypt's
+# staging service and saves them only if it passes, so a missing permission
+# fails here rather than at the next real renewal.
+- name: Switch an existing certificate's renewals to Route53
+  ansible.builtin.command: >
+    certbot reconfigure --cert-name {{ domain }} --dns-route53 --non-interactive
+  changed_when: true
+  when:
+    - enable_tls
+    - tls_renewal.rc == 1
 
 - name: Install renewal deploy hook to reload nginx
   ansible.builtin.copy:

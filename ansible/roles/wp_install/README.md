@@ -20,9 +20,10 @@ Moving the install after `tls` means the certificate is real before the address
 is written, so the recorded URL is true the first time and never needs
 correcting.
 
-The install cannot simply move up instead, because certbot's `--webroot` method
-needs the nginx vhost that the `wordpress` role renders. The dependency chain is
-vhost → certificate → install, and no single role spans it.
+When this split was made, `tls` could not move ahead of `wordpress` instead:
+certbot validated over HTTP and needed the nginx vhost that role renders.
+Validation is DNS-01 now and needs nothing from the vhost, so the two roles
+could be reordered and this one folded back in. That has not been done.
 
 ## Ordering
 

@@ -5,7 +5,7 @@ autoindex off;
 # If you need Jetpack/mobile app, allow specific IPs instead of deny all.
 location = /xmlrpc.php { deny all; }
 
-# Block dotfiles (.git, .env, .htaccess) — but allow ACME challenges
+# Block dotfiles (.git, .env, .htaccess) — but leave /.well-known/ reachable
 location ~ /\.(?!well-known) { deny all; }
 
 # Never serve wp-config or its backups

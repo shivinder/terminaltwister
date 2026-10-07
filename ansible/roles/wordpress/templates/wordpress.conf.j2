@@ -15,10 +15,6 @@ server {
 {% endif %}
     server_name www.{{ domain }};
 
-    location /.well-known/acme-challenge/ {
-        root {{ wp_root }};
-    }
-
     location / {
         return 301 {{ 'https' if tls_on else 'http' }}://{{ domain }}$request_uri;
     }
@@ -30,10 +26,6 @@ server {
     listen [::]:80;
     server_name {{ domain }};
 {% if tls_on %}
-
-    location /.well-known/acme-challenge/ {
-        root {{ wp_root }};
-    }
 
     location / {
         return 301 https://$host$request_uri;

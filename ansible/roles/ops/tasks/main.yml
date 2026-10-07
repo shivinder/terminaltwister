@@ -4,9 +4,14 @@
 # Unconditional: wp-backup.sh now always publishes the BackupSuccess metric, so
 # the CLI is always needed. It used to be installed only when S3 upload or the
 # CloudWatch agent was enabled.
-- name: Install AWS CLI (S3 upload / CloudWatch metrics)
+#
+# cron is named because Debian's cloud image has none: without it the schedule
+# task below fails for want of `crontab`, and nothing would run the backup.
+- name: Install AWS CLI (S3 upload / CloudWatch metrics) and cron
   ansible.builtin.apt:
-    name: awscli
+    name:
+      - awscli
+      - cron
     state: present
 
 - name: Create local backup directory
@@ -61,7 +66,7 @@
 # Installed when absent; when a version is pinned, also reinstalled on mismatch.
 - name: Download CloudWatch agent (arch-aware)
   ansible.builtin.get_url:
-    url: "https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}/{{ cloudwatch_agent_version }}/amazon-cloudwatch-agent.deb"
+    url: "https://amazoncloudwatch-agent.s3.amazonaws.com/debian/{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}/{{ cloudwatch_agent_version }}/amazon-cloudwatch-agent.deb"
     dest: /tmp/amazon-cloudwatch-agent.deb
     mode: "0644"
   when: >-

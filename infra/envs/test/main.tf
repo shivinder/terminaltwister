@@ -14,6 +14,11 @@ module "wordpress" {
   # ansible/group_vars/test.yml.
   dns_name = "test.terminaltwister.com"
 
+  # Lets this instance answer Let's Encrypt's DNS challenge for this name and no
+  # other — in particular not production's. Must match domain (plus www.domain
+  # when www_alias) in ansible/group_vars/test.yml.
+  certificate_names = ["test.terminaltwister.com"]
+
   # Distinct CIDRs from production (10.0.0.0/16).
   # Must match vpc_cidr in ansible/group_vars/test.yml.
   vpc_cidr            = "10.10.0.0/16"

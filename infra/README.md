@@ -14,9 +14,9 @@ infra/
 ├── modules/wordpress/     # VPC, subnets, SG, EC2, EIP, S3, IAM, alerting, snapshots, DNS record
 │   ├── main.tf            # VPC, public + private subnets, IGW, routing
 │   ├── security.tf        # security group (restricted)
-│   ├── ec2.tf             # Ubuntu 26.04 LTS instance + Elastic IP
+│   ├── ec2.tf             # Debian 13 instance + Elastic IP
 │   ├── s3.tf              # backup bucket (versioned, lifecycle, private, TLS-only)
-│   ├── iam.tf             # instance role: s3 backup write, metric publish, optional CW agent
+│   ├── iam.tf             # instance role: s3 backup write, metric publish, ACME challenge records, optional CW agent
 │   ├── monitoring.tf      # SNS topic + backup-failure alarm (only if alarm_email set)
 │   ├── snapshots.tf       # DLM nightly root-volume snapshots (only if retention > 0)
 │   ├── dns.tf             # Route53 A record → Elastic IP (only if dns_name set)
@@ -46,9 +46,11 @@ infra/
   than sharing production's. Production sends HSTS with `includeSubDomains`,
   which covers every name under the apex, so a plain-HTTP test site would be
   unreachable from any browser that had visited production. Separate
-  certificates also keep production's private key off the disposable box and let
-  each host renew independently via HTTP-01. Distinct VPC CIDRs allow future
-  peering.
+  certificates also keep production's private key off the disposable box. Each
+  host issues and renews on its own over DNS-01: its instance role may write
+  the `_acme-challenge` TXT records of its own `certificate_names` and nothing
+  else in the shared zone, so test cannot obtain a certificate for production's
+  name. Distinct VPC CIDRs allow future peering.
 - **Two recovery layers, on purpose.** The nightly Ansible backup puts content
   in S3 with 90 days of depth; DLM snapshots keep the last 7 days of the whole
   disk. Neither replaces the other — S3 is how you get last month's uploads
@@ -128,21 +130,22 @@ cd infra/envs/test
 terraform init
 terraform plan
 terraform apply
-terraform output    # public_ip, dns_record, private_ip, instance_id, security_group_id,
-                    # backup_bucket, backup_alerts, root_volume_snapshots
+terraform output    # public_ip, dns_record, certificate_names, private_ip, instance_id,
+                    # security_group_id, backup_bucket, backup_alerts, root_volume_snapshots
 ```
 
 **What a clean first apply looks like:** 21 resources added, none changed or
 destroyed — VPC, IGW, two subnets, route table + association, the VPC's adopted
 default SG and default route table, security group, EC2, EIP + association, six
 S3 resources, three IAM resources. Add one where `dns_name` is set, as test has
-it — the Route53 A record. Add three more when `alarm_email` is set — an SNS
-topic, its email subscription and the backup alarm — and three more again when
-`snapshot_retention_days` is above 0, as production has it: a DLM policy, its
-service role and that role's policy attachment. Test creates neither of those
-sets and lands on 22; production, with both and no `dns_name` until cutover, on
-27. A wildly different count means something is off; read the diff before
-continuing.
+it — the Route53 A record — and one where `certificate_names` is set, as both
+environments have it: the role policy for the challenge records. Add three more
+when `alarm_email` is set — an SNS topic, its email subscription and the backup
+alarm — and three more again when `snapshot_retention_days` is above 0, as
+production has it: a DLM policy, its service role and that role's policy
+attachment. Test creates neither of those sets and lands on 23; production,
+with both and no `dns_name` until cutover, on 28. A wildly different count
+means something is off; read the diff before continuing.
 
 **If apply fails with `BucketAlreadyExists`:** S3 bucket names are globally unique
 across all of AWS, so `terminaltwister-tfstate` or `terminaltwister-backups-test`
@@ -203,8 +206,10 @@ risk quite apart from snapshot cost, and one the backup alarm above will catch.
 
    Where `dns_name` is not set (production, until cutover), point the apex A
    record at `public_ip` yourself; `www` is a CNAME to the apex and follows.
-   The `tls` role validates over HTTP-01 and the smoke test fetches the site by
-   name, so both need the record live before deploy. Setting
+   The certificate does not need the record — the `tls` role validates over
+   DNS-01, using the access `certificate_names` grants — but the smoke test
+   fetches the site by name and the deploy job checks the record before the
+   play starts, so a CI deploy still needs it live. Setting
    `dns_name = "terminaltwister.com"` in `envs/production/main.tf` hands the
    apex to Terraform, and the next apply repoints the live site at this
    instance — so that change is the cutover, not something to do ahead of it.

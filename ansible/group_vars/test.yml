@@ -7,11 +7,13 @@
 # serving real HTTPS is what makes that header honest rather than something to
 # work around.
 #
-# Its own certificate, not a copy of production's: HTTP-01 validates each name
-# against whichever host its DNS points at, so this box renews independently,
-# and production's private key never lands on the environment built to be thrown
-# away. Rate limits are not a factor — the 5-duplicates-per-week ceiling is per
-# exact name set, and this set is test.terminaltwister.com alone.
+# Its own certificate, not a copy of production's: the instance role may write
+# the DNS-01 challenge record for this name only (certificate_names in
+# infra/envs/test/main.tf), so this box issues and renews independently and can
+# never obtain a certificate for production's name — and production's private
+# key never lands on the environment built to be thrown away. Rate limits are
+# not a factor — the 5-duplicates-per-week ceiling is per exact name set, and
+# this set is test.terminaltwister.com alone.
 #
 # Network values must match infra/envs/test/main.tf
 

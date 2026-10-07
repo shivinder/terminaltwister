@@ -17,7 +17,7 @@
     - "php{{ php_version }}-fpm"
 
 # --- mysql_secure_installation equivalent ---
-# On Ubuntu, MariaDB root authenticates via unix_socket (no password,
+# On Debian, MariaDB root authenticates via unix_socket (no password,
 # only root shell can connect) — this is the secure default.
 
 - name: Remove anonymous MySQL users

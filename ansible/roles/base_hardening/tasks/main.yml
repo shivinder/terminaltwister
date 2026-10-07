@@ -5,6 +5,18 @@
     cache_valid_time: 3600
     upgrade: dist
 
+# The last three are here because Debian's cloud image is leaner than most:
+# none of them is preinstalled, and nothing else this play installs pulls
+# them in.
+#
+#   nftables  - Debian's fail2ban bans through `nft` by default, but only
+#               recommends `nftables | iptables`, and the image already has
+#               iptables. Without the binary every ban fails, and the only
+#               sign of it is a line in fail2ban's own log.
+#   logrotate - nginx, fail2ban and the backup script all ship rotation
+#               rules; without this nothing ever acts on them.
+#   acl       - lets Ansible become www-data when pipelining is off, which
+#               is what a run that misses ansible.cfg gets.
 - name: Install baseline packages
   ansible.builtin.apt:
     name:
@@ -15,6 +27,9 @@
       - unzip
       - git
       - python3-pymysql
+      - nftables
+      - logrotate
+      - acl
     state: present
 
 - name: Set timezone

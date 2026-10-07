@@ -1,11 +1,15 @@
-# Latest Ubuntu 26.04 LTS ("Resolute Raccoon") arm64 AMI (Graviton),
-# via Canonical's public SSM parameter
-data "aws_ssm_parameter" "ubuntu_2604_ami" {
-  name = "/aws/service/canonical/ubuntu/server/26.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
+# Latest Debian 13 ("trixie") arm64 AMI (Graviton), via the public SSM
+# parameter the Debian cloud team publishes from its own account
+# (136693071363). The major version is pinned in the path on purpose:
+# php_version in ansible/group_vars/all/main.yml follows what this release
+# ships, so moving to Debian 14 is a change to both, not a surprise on rebuild.
+# The image's login user is `admin`.
+data "aws_ssm_parameter" "debian_ami" {
+  name = "/aws/service/debian/release/13/latest/arm64"
 }
 
 resource "aws_instance" "wordpress" {
-  ami                    = nonsensitive(data.aws_ssm_parameter.ubuntu_2604_ami.value)
+  ami                    = nonsensitive(data.aws_ssm_parameter.debian_ami.value)
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.wordpress.id]
@@ -36,7 +40,7 @@ resource "aws_instance" "wordpress" {
   }
 
   lifecycle {
-    # Don't replace the instance every time Canonical publishes a new AMI
+    # Don't replace the instance every time Debian publishes a new AMI
     ignore_changes = [ami]
   }
 

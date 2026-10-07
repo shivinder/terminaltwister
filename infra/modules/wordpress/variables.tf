@@ -129,7 +129,21 @@ variable "dns_name" {
 }
 
 variable "dns_zone" {
-  description = "Existing public Route53 hosted zone that dns_name lives in. Looked up, never created or destroyed here."
+  description = "Existing public Route53 hosted zone that dns_name and certificate_names live in. Looked up, never created or destroyed here."
   type        = string
   default     = "terminaltwister.com"
+}
+
+variable "certificate_names" {
+  description = "Every name the Let's Encrypt certificate covers. Must match domain, plus www.domain when www_alias, in ansible/group_vars/<env>.yml. The instance role may write the _acme-challenge TXT record of each and nothing else in the zone. Empty (the default) grants no Route53 access — see iam.tf."
+  type        = list(string)
+  default     = []
+
+  # A name outside the zone would plan and apply cleanly, then fail inside
+  # certbot on the first deploy: the policy would name a record that cannot
+  # exist in the zone it is scoped to.
+  validation {
+    condition     = alltrue([for name in var.certificate_names : name == var.dns_zone || endswith(name, ".${var.dns_zone}")])
+    error_message = "Every certificate_names entry must be dns_zone itself or a name under it."
+  }
 }

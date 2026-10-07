@@ -13,6 +13,13 @@ module "wordpress" {
   # so it follows without a record of its own.
   # dns_name = "terminaltwister.com"
 
+  # Unlike dns_name, safe to set ahead of cutover: it changes no record, it
+  # only lets this instance answer Let's Encrypt's DNS challenge for these two
+  # names. That is what allows the certificate to exist before the apex moves.
+  # Must match domain, plus www.domain (www_alias), in
+  # ansible/group_vars/production.yml.
+  certificate_names = ["terminaltwister.com", "www.terminaltwister.com"]
+
   # Distinct CIDRs from test (10.10.0.0/16) so the VPCs could be peered later.
   # Must match vpc_cidr in ansible/group_vars/production.yml.
   vpc_cidr            = "10.0.0.0/16"

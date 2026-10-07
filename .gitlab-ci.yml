@@ -270,6 +270,8 @@ tf-destroy-production:
 ansible-lint:
   stage: validate
   image: $ANSIBLE_IMAGE
+  variables:
+    ANSIBLE_CONFIG: $CI_PROJECT_DIR/ansible/ansible.cfg  # see .deploy-ansible
   script:
     - cd ansible
     - ansible-playbook site.yml --syntax-check
@@ -292,6 +294,11 @@ ansible-lint:
       optional: true
   variables:
     ANSIBLE_HOST_KEY_CHECKING: "False"
+    # Named explicitly because the runner checks the repo out world-writable,
+    # and Ansible refuses to load an ansible.cfg it merely finds in such a
+    # directory. Without this the play runs on defaults: pipelining off, and
+    # every `become_user: www-data` task then depends on setfacl being there.
+    ANSIBLE_CONFIG: $CI_PROJECT_DIR/ansible/ansible.cfg
   before_script:
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - cp "$SSH_PRIVATE_KEY" ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
@@ -317,17 +324,18 @@ ansible-lint:
     - |
       cat > /tmp/inventory.ini <<EOF
       [${ENVIRONMENT}]
-      wp-${ENVIRONMENT} ansible_host=${WP_IP} ansible_user=ubuntu
+      wp-${ENVIRONMENT} ansible_host=${WP_IP} ansible_user=admin
 
       [wordpress:children]
       ${ENVIRONMENT}
       EOF
-    # DNS has to point at this box before the play runs: the tls role validates
-    # over HTTP-01 and the smoke test curls the site by name. tf-apply sets the
-    # record itself where dns_name is set in infra/envs/<env>/main.tf; where it
-    # is not (production, until cutover) the record is still pointed by hand.
-    # Checking here turns a missing one into one clear line instead of a Let's
-    # Encrypt failure five roles deep that reads like a TLS bug.
+    # DNS has to point at this box before the play runs: the smoke test curls
+    # the site by name. The certificate no longer needs it — the tls role
+    # validates over DNS-01 through Route53. tf-apply sets the record itself
+    # where dns_name is set in infra/envs/<env>/main.tf; where it is not
+    # (production, until cutover) the record is still pointed by hand.
+    # Checking here turns a missing one into one clear line up front instead
+    # of a smoke-test failure at the very end of the play.
     # awk/python3, not `grep -oP` + getent — the runner is Alpine, so grep is
     # BusyBox and has no -P, and python3 is the base image.
     - DOMAIN=$(awk '/^domain:/ {print $2}' ansible/group_vars/${ENVIRONMENT}.yml)

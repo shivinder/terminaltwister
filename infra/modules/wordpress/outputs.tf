@@ -10,6 +10,16 @@ output "dns_record" {
   value       = try(aws_route53_record.wordpress[0].fqdn, "DISABLED — point the A record at public_ip by hand before deploying")
 }
 
+# Same reasoning again: without the policy a deploy with enable_tls fails inside
+# certbot, on an AccessDenied that does not say which variable was left empty.
+output "certificate_names" {
+  description = "Names whose _acme-challenge record the instance role may write, or a warning when certificate_names is empty"
+  value = try(
+    "${join(", ", var.certificate_names)} (${aws_iam_role_policy.acme_dns[0].name})",
+    "DISABLED — the instance cannot answer Let's Encrypt's DNS challenge; set certificate_names before deploying with enable_tls"
+  )
+}
+
 output "private_ip" {
   description = "Instance private IP — WordPress connects to MariaDB on this address"
   value       = aws_instance.wordpress.private_ip
